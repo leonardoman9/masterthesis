@@ -13,14 +13,14 @@
 \setmainfont{Times New Roman}
 \begin{document}
 	
-	\title{Tensor-prolog: a logic programming framework for training neural networks}
-	\topic{Applied Logic Programming}
-	\candidate{John Smith}
-	\supervisor{Prof.~Mario Rossi}
+	\title{Enabling Multi-Species Bird Classification on Low-Power Bioacoustic Loggers}
+	\topic{Master Thesis in Architecture and Platforms for Artificial Intelligence}
+	\candidate{Leonardo Mannini}
+	\supervisor{Davide Rossi}
 %	\cosupervisor{& John Doe, PhD.} % One co-supervisor.
-%	\cosupervisors{& Dott.~Ing.~Luigi Bianchi\\& Dott~Avv.~Lucia Rossi} % More than one co-supervisor.
-	\academicyear{2020-2021}
-	\session{1st}
+	\cosupervisors{& Elisabetta Farella\\& Stefano Ciapponi} % More than one co-supervisor.
+	\academicyear{2024-2025}
+	\session{5th}
 	
 	\frontispiece 
 	\dedication{dedicated(X) :- friend(X).}
@@ -29,10 +29,69 @@
 	\tablestoc
 	\begintext
 	
+	\chapter*{Abstract}
+	\addcontentsline{toc}{chapter}{Abstract}
+	This thesis investigates multi-species bird classification on low-power bioacoustic loggers, with a focus on deployable deep learning pipelines for constrained hardware.
+
 	\chapter{Introduction}
-	YOUR THESIS HERE~\cite{wielemaker2012swi,swi}
-	
+	\section{Edge AI and TinyML}
+	\subsection{Compression and Optimization Techniques}
+	\subsubsection{Quantization}
+	\subsubsection{Knowledge Distillation}
+	\subsubsection{Pruning}
+	\subsection{Why Compression Is Not Always Applied on Embedded Targets}
+	\subsection{Efficient Neural Network Design}
+
+	\section{Bioacoustics and Conservation Technology}
+	\subsection{Domain Overview}
+	\subsection{Motivation and Practical Impact}
+
+	\chapter{Related Work}
+	\section{Automated Bioacoustic Monitoring of Bird Species}
+	\section{Edge and Low-Power Wildlife Monitoring Systems}
+	\section{Audio Front-End Design for Embedded Classification}
+
+	\chapter{Extended Study and Implementation}
+	\section{Extending the ICASSP Approach}
+	\subsection{Semi-Learnable Filter Design}
+	\subsection{Model Architecture}
+	\section{Dataset and Data Engineering}
+	\subsection{Data Sources and API Querying}
+	\subsection{Preprocessing Pipeline}
+	\section{Experimental Setup}
+	\section{Codebase Refactoring for Clarity and Reusability}
+
+	\chapter{Experiments}
+	\section{Main Experiments}
+	\section{Extra Experiments}
+	\section{Ablation Studies}
+
+	\chapter{Results and Discussion}
+	\section{Classification Results}
+	\section{Error Analysis}
+	\section{Accuracy-Efficiency Trade-Offs}
+
+	\chapter{AudioMoth Integration}
+	\section{Firmware and Library Integration}
+	\section{On-Device Inference Pipeline}
+
+	\chapter{Device Tests and Benchmarking}
+	\section{Functional Tests on Device}
+	\section{Latency, Memory, and Power Benchmarks}
+	\section{Exported INT8 Inference Evaluation}
+
+	\chapter{Conclusions and Future Work}
+	\section{Conclusions}
+	\section{Future Work}
+	\begin{itemize}
+		\item Train on all classes with Mel, linear, and fully learnable front-end variants.
+		\item Evaluate accuracy drop of the exported INT8 model during real inference.
+		\item Extend cross-device validation on additional low-power hardware.
+	\end{itemize}
+
 	\appendix
+	\chapter{Supplementary Materials}
+	Additional implementation details, extended tables, and supplementary plots can be reported here.
 	
 	\printbibliography[heading=bibintoc] % biblatex
 

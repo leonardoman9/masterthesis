@@ -143,16 +143,18 @@ with the `report' document style}}{}
         \end{center}%
         \vfill%
     \begin{minipage}[t]{\textwidth}%
-    \begin{tabular}{ll}%
-    CANDIDATE \hspace{30mm} & SUPERVISOR \\%
+    \centering
+    \setlength{\tabcolsep}{0pt}%
+    \begin{tabular*}{0.9\textwidth}{@{\extracolsep{\fill}}ll}%
+    CANDIDATE & SUPERVISOR \\%
     \@candidate & \@supervisor\\[5mm]%
     \if*\@cosupervisors 
         \if*\@cosupervisor & \\[27mm] 
         \else & \@cosupervisor \\[5mm] \fi 
     \else & \@cosupervisors \\ \fi
-    \end{tabular} \\[5mm]%
-    \centerline{Academic year \@academicyear}\\ %
-    \centerline{Session \@session}\\ %
+    \end{tabular*}\par\vspace{5mm}%
+    \centerline{Academic year \@academicyear}%
+    \centerline{Session \@session}%
     \end{minipage}%
         \null
     \newpage}

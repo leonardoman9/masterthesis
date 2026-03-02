@@ -58,6 +58,8 @@
 
 	A third implication concerns evaluation quality. Existing studies still use heterogeneous benchmarks, hardware settings, and reporting protocols, which makes direct comparison difficult \cite{abadade2023tinymlsurvey}. Therefore, this thesis adopts a measurement-oriented approach: algorithmic performance is discussed together with on-device behavior, and design decisions are justified by their net effect on deployment viability rather than by isolated model-level gains.
 	\subsection{Compression and Optimization Techniques}
+	This subsection provides background concepts for TinyML-oriented model optimization. Detailed implementation choices are discussed later only for the techniques that are effectively used in the proposed pipeline.
+
 	\subsubsection{Quantization}
 	Quantization maps floating-point tensors to lower-precision numerical formats, typically integers, to reduce model memory and improve inference efficiency on hardware that provides optimized integer kernels. In an affine uniform quantizer, a floating-point value \(x\) is mapped to an integer \(q\) through
 	\begin{equation}
@@ -134,7 +136,18 @@
 		\item to validate the system with both offline metrics and on-device measurements, including latency, memory, and energy-oriented analyses.
 	\end{enumerate}
 
+	Methodologically, the thesis adopts a system--algorithm co-design perspective: front-end design, compact architecture, training objective, and deployment constraints are optimized jointly rather than in isolation.
+
 	Scope is intentionally operational. The target problem is closed-set classification with an explicit ``no bird'' class, within species pools relevant to realistic monitoring deployments. This thesis does not aim to replace globally scoped cloud systems; instead, it focuses on robust local specialization and edge-executable inference under strict resource budgets.
+
+	\subsection{Contributions}
+	The main contributions of this thesis are:
+	\begin{enumerate}
+		\item a semi-learnable filterbank tailored for edge bioacoustic classification;
+		\item a focal-distillation training strategy improving difficult-species recognition;
+		\item a reproducible dataset pipeline with realistic negative-class modeling;
+		\item on-device benchmarking on AudioMoth including energy measurements.
+	\end{enumerate}
 
 	\subsection{Evaluation Protocol and Validity Considerations}
 	Evaluation follows a class-aware and deployment-aware protocol. Alongside accuracy, the analysis uses weighted \(F1\), row-normalized confusion matrices, and confusion-pair inspection to characterize hard species interactions. At decision level, threshold effects are treated explicitly because precision/recall balance has direct operational consequences in ecological monitoring \cite{perezgranados2023birdnet,stowell2019birdaudiodetection}.
@@ -204,15 +217,21 @@
 	The constrained deployment literature repeatedly converges on the same point: compact architecture design and compression-aware training must be co-optimized, and performance must be assessed with real device metrics, not only with parameter count. Across studies, quantization, pruning, and distillation are the most recurrent techniques for obtaining deployable models under strict memory and power budgets \cite{wuint8quant2020,li2019pruning,hinton2015distilling}. Their practical impact, however, depends strongly on runtime kernels and hardware characteristics, which is why microcontroller-oriented analyses increasingly report latency, power, and energy jointly \cite{tao2022energy}.
 
 	\subsection{Synthesis and Research Gap}
-	The reviewed literature shows a clear progression: from isolated recognition models to integrated ecological monitoring systems that must remain accurate, efficient, and robust under field variability. Existing studies provide strong foundations in three directions: large-scale bird recognition, low-power deployment, and adaptive front-end design. At the same time, a concrete gap remains at their intersection. Many high-accuracy models are too heavy for always-on edge operation; many tiny models lose discriminative power on difficult species groups; many front-end studies are validated outside strict low-power multi-species field scenarios.
+	The reviewed literature shows a clear progression: from isolated recognition models to integrated ecological monitoring systems that must remain accurate, efficient, and robust under field variability. Existing studies provide strong foundations in large-scale bird recognition, low-power deployment, and adaptive front-end design. At the same time, a specific gap remains at their intersection.
 
-	This gap motivates the present contribution: a compact bird classification pipeline that explicitly co-designs representation learning, architecture efficiency, and edge deployment constraints, with special focus on semi-learnable front-end behavior in realistic multi-species monitoring conditions.
+	Large-scale systems such as BirdNET are strong recognition references, but they are not primarily designed as always-on microcontroller pipelines under strict energy budgets. Conversely, many tiny on-device models are energy-efficient but are often validated on simplified class sets or without strong analysis on difficult species confusions. Front-end adaptation studies are also frequently reported without complete deployment-level validation on low-power loggers.
+
+	To the best of our knowledge, practical end-to-end frameworks that jointly combine a semi-learnable front-end, a compact temporal model specialized for local species sets, and direct on-device benchmarking with explicit energy comparison against strong baselines are still limited in bird-monitoring literature. This thesis addresses that gap and positions itself as one of the first practical frameworks for continuous multi-species monitoring on low-power bioacoustic loggers under a unified system-level evaluation protocol.
 	
 	Unlike globally scoped classifiers, the proposed approach is intentionally compatible with specialization on the species set of a specific geographic area. This choice is aligned with real ornithological and environmental monitoring practice, where target taxa, prevalence, and acoustic confounders are strongly site-dependent. By focusing representational capacity on the locally relevant class space, the system can improve practical discrimination in the deployment context instead of spending model budget on species that are not expected in that region \cite{birdnet2021}. The operational impact is concrete. When inference is executed directly on a low-power field device, battery autonomy supports longer unattended deployments \cite{audiomoth2019,tinychirp2024}. This reduces the need for frequent retrieval trips in remote sites and, because first-pass classification is already measurably effective, it also reduces the amount of audio that must be manually re-analyzed by domain experts.
 
 	\chapter{Study and Implementation}
-	This chapter presents the complete technical study behind the proposed system, from the problem definition to the implementation choices and the experimental evidence.
-	\section{Extended ICASSP Study}
+	This chapter describes the methods introduced in this thesis.
+	This chapter operationalizes the system--algorithm co-design claim by treating representation learning, compact modeling, and deployment profiling as one integrated engineering problem.
+	The proposed system combines established building blocks from the literature with original contributions targeted at low-power bioacoustic monitoring. The standard part of the architecture includes STFT-based time-frequency analysis, a compact Matchbox-style convolutional encoder, GRU temporal modeling, and attention pooling. These components are not claimed as novel by themselves; in this thesis they provide a strong, efficient, and reproducible baseline for edge-oriented bird classification.
+
+	Relative to common fixed front-end pipelines discussed in Chapter~1, the first core contribution is the semi-learnable front-end, which preserves an interpretable log--linear prior while adapting frequency allocation to the active species set. A second contribution is the design of a small and specialized model configuration, explicitly optimized for difficult local species subsets instead of generic large-scale taxonomies. A third contribution is the complete deployment path on AudioMoth, including firmware-side integration and on-device latency/energy benchmarking. Finally, the thesis contributes a reproducible experimental pipeline with realistic negative-class modeling and controlled comparisons among fixed, semi-learnable, and fully learnable front-end strategies.
+	\section{System Study and Implementation}
 	\subsection{Problem Definition and Project Scope}
 	The project addresses \emph{multi-class bird sound classification}. Multi-class classification means that, given one input clip \(x\), the model must select exactly one label among \(C\) possible classes. In this work, the classes are bird species plus one additional negative class representing the absence of bird vocalizations. If \(p(c \mid x)\) denotes the predicted probability for class \(c\), the decision is made by selecting the class associated with the highest probability.
 
@@ -447,16 +466,24 @@
 	In practical terms, this stage compresses a long temporal sequence into one discriminative embedding while preserving frame importance through \(\alpha_t\). It is one of the key reasons the architecture remains compact without discarding temporal selectivity.
 
 	\subsubsection{Layer-Wise Tensor Flow in WrenNet}
-	Let \(B\) be batch size, \(L\) waveform length, and \(C\) number of classes. For a \(3\)-second clip at \(32\)~kHz, \(L=96{,}000\). The forward path can be written as
+	Let \(B\) be batch size, \(L\) waveform length in samples, \(F\) number of front-end filters, \(F_c\) number of CNN output channels, \(H_d\) recurrent hidden size, \(T\) number of time frames after STFT, and \(C\) number of classes. For a \(3\)-second clip at \(32\)~kHz, \(L=96{,}000\).
+
+	The forward path is
 	\begin{equation}
-		x \in \mathrm{R}^{B\times L}
-		\rightarrow S \in \mathrm{R}^{B\times F\times T}
-		\rightarrow H \in \mathrm{R}^{B\times F_c\times T}
-		\rightarrow R \in \mathrm{R}^{B\times T\times H_d}
-		\rightarrow c \in \mathrm{R}^{B\times H_d}
-		\rightarrow o \in \mathrm{R}^{B\times C}.
+		\begin{array}{rcll}
+			X &\in& \mathrm{R}^{B\times L} & \mbox{(raw waveform)}\\
+			S &=& \Phi_{\mathrm{FE}}(X) \in \mathrm{R}^{B\times F\times T} & \mbox{(STFT + filterbank)}\\
+			H &=& \Phi_{\mathrm{CNN}}(S) \in \mathrm{R}^{B\times F_c\times T} & \mbox{(Matchbox encoder)}\\
+			R &=& \Phi_{\mathrm{GRU}}\!\left(H^{\top}\right) \in \mathrm{R}^{B\times T\times H_d} & \mbox{(temporal states)}\\
+			c &=& \Phi_{\mathrm{att}}(R) \in \mathrm{R}^{B\times H_d} & \mbox{(attention context)}\\
+			o &=& \Phi_{\mathrm{cls}}(c) \in \mathrm{R}^{B\times C} & \mbox{(logits)}\\
+			p &=& \mathrm{softmax}(o) \in \mathrm{R}^{B\times C} & \mbox{(probabilities).}
+		\end{array}
 	\end{equation}
-	In the compact configuration, \(F=64\), \(F_c=32\), \(H_d=64\). The time length \(T\) is determined by STFT windowing and hop size. This decomposition clarifies that only the final classifier depends directly on \(C\), while front-end, CNN, recurrent, and attention layers remain class-agnostic and therefore reusable across class-set variants.
+
+	Here \(H^{\top}\) indicates the channel-time permutation needed by the GRU input format, from \(B\times F_c\times T\) to \(B\times T\times F_c\). In other words, each symbol in the path represents one tensor after one block: \(X\) raw audio, \(S\) spectral representation, \(H\) convolutional features, \(R\) recurrent sequence, \(c\) pooled embedding, \(o\) class logits, and \(p\) class probabilities.
+
+	In the compact configuration, \(F=64\), \(F_c=32\), \(H_d=64\). This decomposition clarifies that only the final classifier depends directly on \(C\), while front-end, CNN, recurrent, and attention layers remain class-agnostic and therefore reusable across class-set variants.
 
 	\subsubsection{Concrete Instantiation Used in the Main Experiments}
 	The concrete student used in the main distilled experiments is built around the combined log--linear front-end with trainable \(b\) and \(w\), \(64\) spectral filters, MatchboxNetSkip with \(32\) base channels, single-direction GRU with hidden size \(64\), scalar temporal attention, and linear classification head. This design keeps representational capacity where it most affects difficult bioacoustic boundaries, while avoiding heavy recurrent stacks or high-channel convolutional expansions.
@@ -557,12 +584,12 @@
 
 	In practical terms, the learned breakpoint can move away from initialization toward lower-frequency emphasis when this improves class separation for the active species set. This behavior is consistent with the acoustic structure of many bird calls, where relevant cues often concentrate in specific frequency bands rather than being uniformly distributed over the entire spectrum. The transition-width parameter complements this mechanism by controlling how sharp or smooth the log-linear change is. Together, these two parameters provide controlled flexibility with negligible model-size overhead.
 
-	To make this interpretation auditable, Figure~\ref{fig:learned_frequency_mappings_16khz} provides a static reconstruction of the interactive ``Learned Frequency Mappings'' report. The plot compares reference mappings and learned mappings derived from the recorded \((b,w)\) values of representative runs.
+	To make this interpretation auditable, Figure~\ref{fig:learned_frequency_mappings_16khz} reports the learned frequency mappings for representative runs. The plot compares reference mappings and learned mappings derived from the recorded \((b,w)\) values.
 
 	\begin{figure}[t]
 		\centering
 		\includegraphics[width=0.96\textwidth]{images/learned_frequency_mappings_16khz.png}
-		\caption{Reconstructed learned frequency mappings from run-level breakpoint and transition-width values (\(0\)--\(16\) kHz). Curves are generated from the same adaptive mapping equations used in the interactive HTML report.}
+		\caption{Learned frequency mappings from run-level breakpoint and transition-width values (\(0\)--\(16\) kHz). Curves are generated with the adaptive mapping equations used by the proposed front-end.}
 		\label{fig:learned_frequency_mappings_16khz}
 	\end{figure}
 
@@ -601,6 +628,29 @@
 	\begin{table}[t]
 		\centering
 		\small
+		\caption{Key results summary across classification quality and deployment efficiency.}
+		\label{tab:key_results_summary}
+		\begin{tabular}{|l|c|c|c|c|}
+			\hline
+			Setting & Test Acc (\%) & Parameters & Energy/inf. [J] & Latency/inf. [s] \\
+			\hline
+			Easy subset, semi-learnable \(8(+1)\) & 90.76 & 57,546 & -- & -- \\
+			Hard subset, semi-learnable \(13(+1)\) & 77.47 & 57,546 & -- & -- \\
+			Full dataset, semi-learnable \(70(+1)\) & 66.51 & 57,546 & -- & -- \\
+			Full dataset, larger model \(70(+1)\) & 70.14 & 136,906 & -- & -- \\
+			AudioMoth deployed student (3 s window) & 87.22\(^\ast\) & \(\sim57\)k & 0.0771 & 1.692 \\
+			BirdNET benchmark on Raspberry Pi 3 B+ & -- & -- & 2.79 & 0.978 \\
+			\hline
+		\end{tabular}
+	\end{table}
+
+	\noindent\(^\ast\)Accuracy reported for the corresponding compact student configuration on the controlled \(8(+1)\) benchmark.
+
+	This summary makes the practical positioning explicit. BirdNET remains a strong recognition reference, while the deployment comparison shows that the proposed low-power configuration operates at substantially lower energy cost per decision in continuous monitoring mode, well above the \(16\times\) reference threshold and reaching \(36.2\times\) in the reported benchmark setting.
+
+	\begin{table}[t]
+		\centering
+		\small
 		\caption{Representative classification results across configurations.}
 		\label{tab:extended_results}
 		\begin{tabular}{|l|c|c|c|c|}
@@ -611,8 +661,8 @@
 			Fully learnable subset & 8(+1) & 70,442 & 83.83 & 83.84 \\
 			Easy species subset & 8(+1) & 57,546 & 90.76 & 90.90 \\
 			Hard species subset & 13(+1) & 57,546 & 77.47 & 77.97 \\
-			Full dataset compact model & 70(+1) & 57,546 & 66.41 & 67.49 \\
-			Full dataset larger model & 70(+1) & 136,906 & 70.13 & 70.81 \\
+			Full dataset compact model & 70(+1) & 57,546 & 66.51 & 67.49 \\
+			Full dataset larger model & 70(+1) & 136,906 & 70.14 & 70.81 \\
 			\hline
 		\end{tabular}
 	\end{table}
@@ -844,7 +894,7 @@
 	\subsubsection{Accuracy-Efficiency Trade-Offs}
 	Deployment-level comparison confirms that efficiency must be evaluated jointly with recognition metrics. The compact student configuration yields a much stronger practical profile than heavy baselines when measured on edge-relevant hardware and fixed 3-second inference windows. In this setting, the key quantity is not only absolute classification quality, but the energy required to obtain each prediction under realistic firmware constraints.
 
-	The detailed benchmarking protocol, raw electrical measurements, and instrumentation figures are reported in Section~\ref{sec:device_benchmarks}. In summary, relative to Raspberry Pi 3B+ student TFLite inference (\(0.1720\)~J per window), the AudioMoth deployment (\(0.0771\)~J) reduces energy per inference by about \(55\%\). Relative to the Raspberry Pi student STFT baseline (\(1.6500\)~J) and the BirdNET baseline (\(2.7900\)~J), the reductions are about \(95.3\%\) and \(97.2\%\), respectively.
+	The detailed benchmarking protocol, raw electrical measurements, and instrumentation figures are reported in Section~\ref{sec:device_benchmarks}. In summary, relative to Raspberry Pi 3B+ student TFLite inference (\(0.1720\)~J per window), the AudioMoth deployment (\(0.0771\)~J) reduces energy per inference by about \(55\%\). Relative to the Raspberry Pi student STFT baseline (\(1.6500\)~J) and the BirdNET baseline (\(2.7900\)~J), the reductions are about \(95.3\%\) and \(97.2\%\), respectively. The BirdNET gap corresponds to a \(36.2\times\) lower energy cost in this setup, i.e., well above the \(16\times\) threshold highlighted in the paper.
 
 \subsection{AudioMoth Deployment}
 \subsubsection{Firmware and Library Integration}
@@ -910,6 +960,27 @@
 		}
 	\end{table}
 
+	\begin{table}[t]
+		\centering
+		\scriptsize
+		\caption{Energy comparison relative to AudioMoth (baseline).}
+		\label{tab:energy_relative_summary}
+		\resizebox{\textwidth}{!}{%
+		\begin{tabular}{|l|c|c|c|}
+			\hline
+			Reference system & Energy/inf. [J] & Ratio \(E_{\mathrm{ref}}/E_{\mathrm{AM}}\) & Saving with AudioMoth [\%] \\
+			\hline
+			AudioMoth (baseline) & 0.0771 & \(1.00\times\) & -- \\
+			Student TFLite (RPI3 B+) & 0.1720 & \(2.23\times\) & \(55.2\%\) \\
+			Student STFT (RPI3 B+) & 1.6500 & \(21.4\times\) & \(95.3\%\) \\
+			BirdNET (RPI3 B+) & 2.7900 & \(36.2\times\) & \(97.2\%\) \\
+			\hline
+		\end{tabular}
+		}
+	\end{table}
+
+	Here, \(E_{\mathrm{ref}}/E_{\mathrm{AM}}>1\) means the reference consumes more energy than AudioMoth for one inference window. The saving column is computed as \(100\cdot\left(1-\frac{E_{\mathrm{AM}}}{E_{\mathrm{ref}}}\right)\), i.e., the percentage energy reduction obtained by using AudioMoth instead of the reference system.
+
 	\begin{figure}[t]
 		\centering
 		\includegraphics[width=0.82\textwidth]{images/oscilloscope.jpg}
@@ -926,7 +997,7 @@
 
 	Power and energy benchmarking follows the instrumentation strategy shown in Figures~\ref{fig:oscilloscope_energy_setup} and \ref{fig:measurement_example_setup}. The key metric is energy per inference window, because it directly determines battery lifetime in always-on monitoring. Results in Table~\ref{tab:energy_benchmark} show that the embedded pipeline reaches a substantially lower energy operating point than heavier baselines, even when absolute latency is higher.
 
-	The measured values show a clear scaling pattern. Relative to Raspberry Pi 3B+ student TFLite inference (\(0.1720\)~J per window), the AudioMoth deployment (\(0.0771\)~J) reduces energy per inference by about \(55\%\). Relative to the Raspberry Pi student STFT baseline (\(1.6500\)~J), the reduction is about \(95.3\%\), and relative to the BirdNET baseline (\(2.7900\)~J) it is about \(97.2\%\). In other words, in the tested configuration the microcontroller pipeline operates at approximately \(2.23\times\), \(21.4\times\), and \(36.2\times\) lower energy cost per decision than those three references, respectively.
+	The measured values show a clear scaling pattern. Relative to Raspberry Pi 3B+ student TFLite inference (\(0.1720\)~J per window), the AudioMoth deployment (\(0.0771\)~J) reduces energy per inference by about \(55\%\). Relative to the Raspberry Pi student STFT baseline (\(1.6500\)~J), the reduction is about \(95.3\%\), and relative to the BirdNET baseline (\(2.7900\)~J) it is about \(97.2\%\). In other words, in the tested configuration the microcontroller pipeline operates at approximately \(2.23\times\), \(21.4\times\), and \(36.2\times\) lower energy cost per decision than those three references, respectively. For the BirdNET comparison, this is well above the \(16\times\) paper-level threshold.
 
 	This behavior defines the practical deployment trade-off: the microcontroller profile accepts slower per-window inference in exchange for dramatically reduced average power. AudioMoth inference time per 3-second window is longer (\(1.692\)~s) than Raspberry Pi execution, but average power is much lower (\(0.0456\)~W versus \(\sim2.7\)--\(2.84\)~W). For long-horizon field monitoring, this trade is favorable because maintenance interval and autonomy dominate operational cost.
 
@@ -944,9 +1015,14 @@
 
 	Across experiments, the semi-learnable combined log--linear front-end consistently provides the best trade-off between flexibility and stability. It outperforms fixed mel and linear-triangular mappings in controlled comparisons, and it also outperforms a fully learnable front-end despite using a far more constrained parameterization. This result is central because it shows that structured adaptability can be more effective than unconstrained flexibility in low-footprint bioacoustic models.
 
-	Results on the full \(70(+1)\)-class setting confirm that the approach scales beyond small toy subsets. While larger models recover additional absolute accuracy, the compact student remains competitive and preserves the deployment-oriented profile required for long-duration acoustic monitoring. The measured efficiency gap versus heavier baselines further supports this direction, with order-of-magnitude reductions in inference energy cost on comparable hardware classes.
+	Results on the full \(70(+1)\)-class setting confirm that the approach scales beyond small toy subsets. While larger models recover additional absolute accuracy, the compact student remains competitive and preserves the deployment-oriented profile required for long-duration acoustic monitoring. The measured efficiency gap versus heavier baselines further supports this direction, with order-of-magnitude reductions in inference energy cost on comparable hardware classes and a BirdNET comparison that remains well above the \(16\times\) reference level.
 
 	Overall, the study supports a clear methodological conclusion: effective low-power bioacoustic classification is obtained through co-design of data pipeline, spectral representation, temporal architecture, and training objective, rather than through isolated optimization of a single component.
+
+	From an operational perspective, the measured energy profile has direct implications for campaign scale. Under continuous 3-second windowing, the deployed system operates at approximately \(0.617\)~Wh/day, whereas the BirdNET reference benchmark is approximately \(22.3\)~Wh/day in the same normalization. Under equal daily energy budget, one BirdNET-level node therefore corresponds to about 36 low-power deployed nodes, with clear impact on battery replacement intervals, storage planning, and number of simultaneously monitored locations.
+
+	\subsection{Limitations}
+	Despite the positive results, four limitations remain explicit. First, the current formulation is closed-set classification with an explicit ``no bird'' class; open-set behavior on unseen taxa is not solved in this work. Second, dataset composition is geographically and acoustically biased by available sources, which may limit transfer without local adaptation. Third, long-tail species with scarce or highly variable recordings remain more fragile than frequent classes. Fourth, inference is single-label per window, so overlapping vocalizations from multiple species are not fully represented and require dedicated multi-label extensions.
 	\section{Future Work}
 	A primary development direction is the \emph{Wren Framework}, currently under active implementation. The objective is to turn the methodology presented in this thesis into a reusable standard workflow that can connect domain experts in biology, bioacoustics, and conservation practice with machine-learning pipelines without requiring advanced ML engineering expertise for every new study.
 

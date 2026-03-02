@@ -336,9 +336,17 @@ def generate_frequency_mapping_figure(out_path: Path) -> None:
     setup_axis(ax, "All Learned Mappings Comparison")
 
     handles, labels = axes[1, 1].get_legend_handles_labels()
-    fig.legend(handles, labels, loc="upper center", ncol=5, fontsize=9, frameon=False)
-    fig.suptitle("Adaptive Frequency Mapping (0-16kHz): Static Reconstruction from HTML Parameters", y=0.98)
-    fig.tight_layout(rect=[0, 0, 1, 0.94])
+    fig.suptitle("Adaptive Frequency Mapping (0-16 kHz)", y=0.985)
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        bbox_to_anchor=(0.5, 0.955),
+        ncol=5,
+        fontsize=9,
+        frameon=False,
+    )
+    fig.tight_layout(rect=[0, 0, 1, 0.88])
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(out_path, dpi=300, bbox_inches="tight")

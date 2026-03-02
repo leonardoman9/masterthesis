@@ -1,0 +1,538 @@
+<!DOCTYPE html>
+<html lang="en"><head>
+<meta http-equiv="content-type" content="text/html; charset=UTF-8">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Learned Frequency Mappings - 16kHz Analysis</title>
+    <script src="Learned%20Frequency%20Mappings%20-%2016kHz%20Analysis_files/chart.min.js"></script>
+    <style>
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 20px;
+            background: #f8f9fa;
+        }
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            padding: 25px;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .title {
+            text-align: center;
+            font-size: 22px;
+            font-weight: bold;
+            color: #2c3e50;
+            margin-bottom: 25px;
+        }
+        .charts-container {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 25px;
+        }
+        .chart-section {
+            background: #fafafa;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #e0e0e0;
+        }
+        .chart-title {
+            font-size: 14px;
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        .chart-container {
+            height: 250px;
+            margin-bottom: 10px;
+        }
+        .params-info {
+            font-size: 11px;
+            color: #666;
+            text-align: center;
+            background: white;
+            padding: 5px;
+            border-radius: 4px;
+        }
+        .summary-container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+            margin-top: 20px;
+        }
+        .species-details {
+            background: #f0f8ff;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #2196f3;
+        }
+        .key-insights {
+            background: #fff8e1;
+            padding: 15px;
+            border-radius: 8px;
+            border-left: 4px solid #ff9800;
+        }
+        .section-title {
+            font-weight: bold;
+            color: #1565c0;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+        .species-group {
+            margin-bottom: 12px;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .group-name {
+            font-weight: bold;
+            color: #2e7d32;
+        }
+        .species-list {
+            margin: 4px 0;
+            padding-left: 10px;
+        }
+        .insight-item {
+            margin-bottom: 8px;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        .highlight {
+            background: #ffeb3b;
+            padding: 1px 3px;
+            border-radius: 2px;
+            font-weight: bold;
+        }
+        .freq-range {
+            color: #d32f2f;
+            font-weight: bold;
+        }
+        .main-legend {
+            display: flex;
+            justify-content: center;
+            gap: 25px;
+            margin: 20px 0;
+            padding: 10px;
+            background: #f5f5f5;
+            border-radius: 6px;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+        }
+        .legend-line {
+            width: 25px;
+            height: 3px;
+            border-radius: 2px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="title">Adaptive Frequency Mapping: Learned Spectral Strategies (0-16kHz)</div>
+
+        <div class="main-legend">
+            <div class="legend-item">
+                <div class="legend-line" style="background: #bdbdbd;"></div>
+                <span>Mel-scale Reference</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-line" style="background: #757575;"></div>
+                <span>Linear Reference</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-line" style="background: #4caf50;"></div>
+                <span>Easy Species (≈Linear)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-line" style="background: #ff9800;"></div>
+                <span>Hard Species (Mixed)</span>
+            </div>
+            <div class="legend-item">
+                <div class="legend-line" style="background: #2196f3;"></div>
+                <span>Single Species (Specialized)</span>
+            </div>
+        </div>
+
+        <div class="charts-container">
+            <div class="chart-section">
+                <div class="chart-title">Easy Species vs References</div>
+                <div class="chart-container">
+                    <canvas id="easyChart" style="display: block; box-sizing: border-box; height: 250px; width: 558px;" width="1116" height="500"></canvas>
+                </div>
+                <div class="params-info">
+                    8 species: b=1.5Hz, w=6 → 90.76% accuracy<br>
+                    Nearly pure linear mapping across full 16kHz range
+                </div>
+            </div>
+
+            <div class="chart-section">
+                <div class="chart-title">Hard Species Group</div>
+                <div class="chart-container">
+                    <canvas id="hardChart" style="display: block; box-sizing: border-box; height: 250px; width: 558px;" width="1116" height="500"></canvas>
+                </div>
+                <div class="params-info">
+                    13 species: b=1224Hz, w=27.4 → 77.47% accuracy<br>
+                    Logarithmic below ~1.2kHz, linear above
+                </div>
+            </div>
+
+            <div class="chart-section">
+                <div class="chart-title">Single Species Specialists</div>
+                <div class="chart-container">
+                    <canvas id="singleChart" style="display: block; box-sizing: border-box; height: 250px; width: 558px;" width="1116" height="500"></canvas>
+                </div>
+                <div class="params-info">
+                    Corvus: b=1955Hz, Upupa: b=5269Hz<br>
+                    Species-specific frequency focus
+                </div>
+            </div>
+
+            <div class="chart-section">
+                <div class="chart-title">All Learned Mappings Comparison</div>
+                <div class="chart-container">
+                    <canvas id="comparisonChart" style="display: block; box-sizing: border-box; height: 250px; width: 558px;" width="1116" height="500"></canvas>
+                </div>
+                <div class="params-info">
+                    Clear pattern: Distinctive species → Linear<br>
+                    Similar species → Low-frequency focus
+                </div>
+            </div>
+        </div>
+
+        <div class="summary-container">
+            <div class="species-details">
+                <div class="section-title">Species Groups &amp; Acoustic Characteristics</div>
+
+                <div class="species-group">
+                    <div class="group-name">Easy Species (b≈1.5Hz → Linear):</div>
+                    <div class="species-list">
+                        Grey Heron, Common Raven, Kestrel, Barn Swallow,
+ Scops Owl, Chiffchaff, Grey-headed Woodpecker, Tawny Owl
+                    </div>
+                    <div style="font-style: italic; color: #666;">
+                        Large raptors, waterbirds, owls - <span class="freq-range">utilize full 0-16kHz spectrum distinctively</span>
+                    </div>
+                </div>
+
+                <div class="species-group">
+                    <div class="group-name">Hard Species (b≈1224Hz → Mixed):</div>
+                    <div class="species-list">
+                        4× Turdus thrushes, 2× Regulus kinglets, 2× Certhia treecreepers, multiple tits
+                    </div>
+                    <div style="font-style: italic; color: #666;">
+                        Congeneric species pairs - <span class="freq-range">critical differences below 1.2kHz</span>
+                    </div>
+                </div>
+
+                <div class="species-group">
+                    <div class="group-name">Single Species Examples:</div>
+                    <div class="species-list">
+                        <strong>Corvus corax</strong> (b=1955Hz): Deep croaks, low-frequency specialist<br>
+                        <strong>Upupa epops</strong> (b=5269Hz): "Hoop-hoop" calls, mid-frequency specialist
+                    </div>
+                </div>
+            </div>
+
+            <div class="key-insights">
+                <div class="section-title">Key Findings</div>
+
+                <div class="insight-item">
+                    <span class="highlight">Counterintuitive:</span> Acoustically distinct species benefit from linear frequency mapping across the full 16kHz range
+                </div>
+
+                <div class="insight-item">
+                    <span class="highlight">Similar Species:</span> Require logarithmic resolution focus below 1-2kHz where subtle differences are preserved
+                </div>
+
+                <div class="insight-item">
+                    <span class="highlight">Upupa Discovery:</span> High breakpoint (5.3kHz) suggests hoopoe's distinctive features are in mid-frequency range
+                </div>
+
+                <div class="insight-item">
+                    <span class="highlight">Biological Validation:</span>
+ Learned mappings correlate with known acoustic ecology - easy species 
+occupy distinct niches, hard species compete in overlapping frequency 
+bands
+                </div>
+
+                <div class="insight-item">
+                    <span class="highlight">System Implication:</span> Adaptive frequency mapping discovers task-specific optimal representations automatically
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Extend frequency range to 16kHz
+        const fMin = 50;
+        const fMax = 16000;
+
+        // Sigmoid function
+        function sigmoid(x, breakpoint, width) {
+            const normalizedBreakpoint = (breakpoint - fMin) / (fMax - fMin);
+            const normalizedX = (x - fMin) / (fMax - fMin);
+            return 1 / (1 + Math.exp(-width * (normalizedX - normalizedBreakpoint)));
+        }
+
+        // Adaptive frequency mapping
+        function adaptiveMapping(x, breakpoint, width) {
+            const logMapping = fMin * Math.pow(fMax / fMin, (x - fMin) / (fMax - fMin));
+            const linearMapping = x;
+            const sigmoidWeight = sigmoid(x, breakpoint, width);
+            return (1 - sigmoidWeight) * logMapping + sigmoidWeight * linearMapping;
+        }
+
+        // Generate frequency points with higher resolution
+        const freqPoints = [];
+        for (let i = fMin; i <= fMax; i += 50) {
+            freqPoints.push(i);
+        }
+
+        // Reference mappings
+        const melData = freqPoints.map(f => ({
+            x: f,
+            y: fMin * Math.pow(fMax / fMin, (f - fMin) / (fMax - fMin))
+        }));
+
+        const linearData = freqPoints.map(f => ({
+            x: f,
+            y: f
+        }));
+
+        // Learned mappings
+        const easySpecies = freqPoints.map(f => ({
+            x: f,
+            y: adaptiveMapping(f, 1.5, 6)
+        }));
+
+        const hardSpecies = freqPoints.map(f => ({
+            x: f,
+            y: adaptiveMapping(f, 1224, 27.4)
+        }));
+
+        const corvus = freqPoints.map(f => ({
+            x: f,
+            y: adaptiveMapping(f, 1955, 51.7)
+        }));
+
+        const upupa = freqPoints.map(f => ({
+            x: f,
+            y: adaptiveMapping(f, 5269, 132)
+        }));
+
+        const regulus = freqPoints.map(f => ({
+            x: f,
+            y: adaptiveMapping(f, 1221, 28.34)
+        }));
+
+        const fullDataset = freqPoints.map(f => ({
+            x: f,
+            y: adaptiveMapping(f, 851, 19)
+        }));
+
+        // Chart options template
+        const baseOptions = {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: false
+                }
+            },
+            scales: {
+                x: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Input Frequency (Hz)',
+                        font: { size: 10 }
+                    },
+                    min: 0,
+                    max: 16000,
+                    ticks: {
+                        font: { size: 9 }
+                    }
+                },
+                y: {
+                    type: 'linear',
+                    title: {
+                        display: true,
+                        text: 'Mapped Freq (Hz)',
+                        font: { size: 10 }
+                    },
+                    min: 0,
+                    max: 16000,
+                    ticks: {
+                        font: { size: 9 }
+                    }
+                }
+            }
+        };
+
+        // Easy species chart
+        new Chart(document.getElementById('easyChart'), {
+            type: 'line',
+            data: {
+                datasets: [
+                    {
+                        data: melData,
+                        borderColor: '#bdbdbd',
+                        borderWidth: 1,
+                        borderDash: [5, 5],
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: linearData,
+                        borderColor: '#757575',
+                        borderWidth: 1,
+                        borderDash: [3, 3],
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: easySpecies,
+                        borderColor: '#4caf50',
+                        borderWidth: 3,
+                        fill: false,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: baseOptions
+        });
+
+        // Hard species chart
+        new Chart(document.getElementById('hardChart'), {
+            type: 'line',
+            data: {
+                datasets: [
+                    {
+                        data: melData,
+                        borderColor: '#bdbdbd',
+                        borderWidth: 1,
+                        borderDash: [5, 5],
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: linearData,
+                        borderColor: '#757575',
+                        borderWidth: 1,
+                        borderDash: [3, 3],
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: hardSpecies,
+                        borderColor: '#ff9800',
+                        borderWidth: 3,
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: regulus,
+                        borderColor: '#ff5722',
+                        borderWidth: 2,
+                        borderDash: [6, 3],
+                        fill: false,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: baseOptions
+        });
+
+        // Single species chart
+        new Chart(document.getElementById('singleChart'), {
+            type: 'line',
+            data: {
+                datasets: [
+                    {
+                        data: melData,
+                        borderColor: '#bdbdbd',
+                        borderWidth: 1,
+                        borderDash: [5, 5],
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: linearData,
+                        borderColor: '#757575',
+                        borderWidth: 1,
+                        borderDash: [3, 3],
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: corvus,
+                        borderColor: '#2196f3',
+                        borderWidth: 2,
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: upupa,
+                        borderColor: '#3f51b5',
+                        borderWidth: 2,
+                        fill: false,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: baseOptions
+        });
+
+        // Comparison chart
+        new Chart(document.getElementById('comparisonChart'), {
+            type: 'line',
+            data: {
+                datasets: [
+                    {
+                        data: easySpecies,
+                        borderColor: '#4caf50',
+                        borderWidth: 2,
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: hardSpecies,
+                        borderColor: '#ff9800',
+                        borderWidth: 2,
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: fullDataset,
+                        borderColor: '#795548',
+                        borderWidth: 2,
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: corvus,
+                        borderColor: '#2196f3',
+                        borderWidth: 1,
+                        fill: false,
+                        pointRadius: 0
+                    },
+                    {
+                        data: upupa,
+                        borderColor: '#3f51b5',
+                        borderWidth: 1,
+                        fill: false,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: baseOptions
+        });
+    </script>
+
+
+</body></html>

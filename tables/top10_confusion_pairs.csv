@@ -1,0 +1,11 @@
+pair,semi_count,semi_pct,fully_count,fully_pct,delta_count,delta_pct
+Lophophanes cristatus <-> Certhia brachydactyla,35,5.63,26,4.18,-9,-1.45
+Bubo bubo <-> Lophophanes cristatus,14,2.17,41,6.37,27,+4.19
+Certhia familiaris <-> Bubo bubo,20,4.91,25,6.14,5,+1.23
+Certhia familiaris <-> Lophophanes cristatus,13,2.05,26,4.11,13,+2.05
+Emberiza cia <-> Lophophanes cristatus,13,2.20,21,3.55,8,+1.35
+Emberiza cia <-> Certhia brachydactyla,12,3.50,17,4.96,5,+1.46
+Certhia familiaris <-> Emberiza cia,7,1.98,17,4.80,10,+2.82
+Poecile montanus <-> Certhia brachydactyla,9,2.85,10,3.16,1,+0.32
+Periparus ater <-> Lophophanes cristatus,6,1.21,10,2.02,4,+0.81
+Poecile montanus <-> Lophophanes cristatus,9,1.60,5,0.89,-4,-0.71

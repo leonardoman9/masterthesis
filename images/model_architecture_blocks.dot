@@ -1,0 +1,25 @@
+digraph WrenNetArchitecture {
+  rankdir=LR;
+  graph [fontname="Helvetica", fontsize=14, label="WrenNet Student Architecture (Readable View)", labelloc=t, ranksep=1.1, nodesep=0.55];
+  node [shape=box, style="rounded,filled", fillcolor="#EEF6FF", color="#2B4C7E", fontname="Helvetica", fontsize=11, penwidth=1.1, margin="0.12,0.08"];
+  edge [color="#4D4D4D", arrowsize=0.8, penwidth=1.0];
+  model_meta [shape=note, fillcolor="#FFF7E6", color="#A67C00", label="Model: Improved_Phi_GRU_ATT\nTotal trainable params: 57,546\nSample rate: 32000 Hz\nFront-end: combined_log_linear"];
+  input [label="Input waveform\n[1, 32000]"];
+  front [label="Spectrogram Front-end (combined_log_linear)\nparams: 2"];
+  dbnorm [label="AmplitudeToDB + sample-wise normalization\nparams: 0"];
+  phi [label="MatchboxNetSkip encoder\nparams: 29,888"];
+  gru [label="GRU temporal layer\nparams: 18,816"];
+  proj [label="Projection Linear\nparams: 4,160"];
+  att [label="AttentionLayer\nparams: 65"];
+  fc [label="Classifier FC (71 classes)\nparams: 4,615"];
+  out [label="Output logits"];
+  input -> front;
+  front -> dbnorm;
+  dbnorm -> phi;
+  phi -> gru;
+  gru -> proj;
+  proj -> att;
+  att -> fc;
+  fc -> out;
+  model_meta -> front [style=dashed, color="#A67C00"];
+}

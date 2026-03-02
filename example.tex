@@ -7,10 +7,23 @@
 \usepackage{lmodern}
 
 
-\usepackage[backend=biber,style=trad-plain, sorting=nty,firstinits=true]{biblatex}
+\usepackage[backend=biber,style=trad-plain, sorting=nty,firstinits=true,hyperref=true]{biblatex}
 \addbibresource{biblio.bib}
+\usepackage[
+	colorlinks=true,
+	linktoc=all,
+	hypertexnames=false,
+	pdfpagelabels=true,
+	bookmarksopen=true,
+	bookmarksnumbered=true,
+	linkcolor=black,
+	citecolor=blue,
+	urlcolor=blue
+]{hyperref}
+\usepackage{bookmark}
 
 \setmainfont{Times New Roman}
+\setcounter{tocdepth}{2}
 \begin{document}
 	
 	\title{Enabling Multi-Species Bird Classification on Low-Power Bioacoustic Loggers}
@@ -23,80 +36,947 @@
 	\session{5th}
 	
 	\frontispiece 
-	\dedication{dedicated(X) :- friend(X).}
+	\dedication{}
 	\toc
 	\figstoc
 	\tablestoc
 	\begintext
 	
 	\chapter*{Abstract}
+	\phantomsection
 	\addcontentsline{toc}{chapter}{Abstract}
-	This thesis investigates multi-species bird classification on low-power bioacoustic loggers, with a focus on deployable deep learning pipelines for constrained hardware.
 
 	\chapter{Introduction}
 	\section{Edge AI and TinyML}
+	Edge AI indicates the execution of AI inference near the data source, rather than in a centralized cloud-only pipeline. TinyML can be seen as the most constrained end of this paradigm, where models are deployed on microcontroller-class devices with strict limits on memory, compute budget, and power consumption \cite{abadade2023tinymlsurvey,singh2023edgeaisurvey}. In practical terms, both approaches are driven by the same system-level goals: lower latency, reduced bandwidth usage, stronger data locality, and better operational robustness when connectivity is unstable.
+
+	For bioacoustic monitoring, this distinction is important. Many deployments are continuous, remote, and battery-constrained; therefore, model quality must be evaluated together with execution cost on target hardware. This is why compression methods are relevant but not sufficient on their own, and why architecture-level efficiency remains a primary design axis.
+	\subsection{System Constraints and Design Implications}
+	Edge AI and TinyML are often described in terms of model size only, but real deployment constraints are broader. Inference on constrained devices must satisfy simultaneous limits on SRAM usage, flash footprint, operator availability in embedded runtimes, and end-to-end response time under realistic duty cycles. In this context, a model that is compact on paper may still be impractical if intermediate activations are too large or if required operators are not efficiently supported on the target platform \cite{abadade2023tinymlsurvey,singh2023edgeaisurvey}.
+
+	A second implication is methodological. The relevant optimization target is not a single metric but a multi-objective surface that includes accuracy, latency, energy, and reliability. Surveyed Edge AI and TinyML literature repeatedly highlights that cloud-centric metrics alone are insufficient for constrained deployment, because they neglect communication overhead, intermittent connectivity, and battery dynamics \cite{abadade2023tinymlsurvey,singh2023edgeaisurvey}. For passive acoustic monitoring, this means that the useful unit of analysis is the complete pipeline: sensing, representation, inference, and selective storage or transmission.
+
+	A third implication concerns evaluation quality. Existing studies still use heterogeneous benchmarks, hardware settings, and reporting protocols, which makes direct comparison difficult \cite{abadade2023tinymlsurvey}. Therefore, this thesis adopts a measurement-oriented approach: algorithmic performance is discussed together with on-device behavior, and design decisions are justified by their net effect on deployment viability rather than by isolated model-level gains.
 	\subsection{Compression and Optimization Techniques}
 	\subsubsection{Quantization}
+	Quantization maps floating-point tensors to lower-precision numerical formats, typically integers, to reduce model memory and improve inference efficiency on hardware that provides optimized integer kernels. In an affine uniform quantizer, a floating-point value \(x\) is mapped to an integer \(q\) through
+	\begin{equation}
+		q = \mathrm{clip}\!\left(\mathrm{round}\!\left(\frac{x}{s}\right)+z,\;q_{\min},q_{\max}\right),
+	\end{equation}
+	and reconstructed as
+	\begin{equation}
+		\hat{x}=s(q-z),
+	\end{equation}
+	where \(s\) is the scale factor and \(z\) is the zero-point \cite{wuint8quant2020}. The quantization error is the difference \(x-\hat{x}\), and it grows when lower bit-widths are used without proper calibration.
+
+	In practice, quantization quality depends on two main design choices. The first is granularity. Per-tensor quantization uses one pair \((s,z)\) for an entire tensor, while per-channel quantization uses different scales across channels and usually preserves convolutional accuracy better. The second is training strategy. Post-training quantization applies conversion after full-precision training and is simpler, but can lose accuracy on sensitive models. Quantization-aware training inserts quantization simulation in the training loop, so parameters adapt to quantization noise and exported int8 models remain closer to floating-point behavior.
+
+	For edge audio pipelines, quantization is not only a compression trick. It can reduce SRAM pressure, model transfer size, and memory bandwidth, often the true runtime bottleneck on microcontrollers. However, the gain is hardware-dependent, so quantized accuracy and measured latency-energy must be evaluated together \cite{tao2022energy}.
 	\subsubsection{Knowledge Distillation}
+	Knowledge distillation transfers information from a larger teacher model to a smaller student model. The core intuition is that hard labels alone do not encode class similarity structure. Teacher predictions provide a richer target distribution, especially useful when classes are acoustically close.
+
+	Let \(z_t\) and \(z_s\) be teacher and student logits. With temperature \(T\), softened probabilities are
+	\begin{equation}
+		p_t^{(T)}(c)=\frac{\exp(z_{t,c}/T)}{\sum_j\exp(z_{t,j}/T)},\qquad
+		p_s^{(T)}(c)=\frac{\exp(z_{s,c}/T)}{\sum_j\exp(z_{s,j}/T)}.
+	\end{equation}
+	The student is trained with a mixed objective:
+	\begin{equation}
+		\mathcal{L}=(1-\lambda)\,\mathcal{L}_{\mathrm{CE}}(y,p_s)+\lambda\,T^2\,\mathrm{KL}\!\left(p_t^{(T)}\|p_s^{(T)}\right),
+	\end{equation}
+	where \(\mathcal{L}_{\mathrm{CE}}\) enforces agreement with ground-truth labels and the KL term enforces agreement with teacher soft targets \cite{hinton2015distilling}.
+
+	In TinyML settings distillation is often decisive because compact students may not have enough capacity to discover robust decision boundaries alone. Distillation guides the student toward regions of parameter space that preserve discriminative behavior under strict memory and compute limits.
 	\subsubsection{Pruning}
+	Pruning removes parameters considered redundant, reducing model size and potentially reducing compute. In unstructured pruning, individual weights are masked:
+	\begin{equation}
+		w_i' = m_i w_i,\qquad
+		m_i = \mathbf{1}\!\left(|w_i| \ge \tau\right),
+	\end{equation}
+	where \(\tau\) is a pruning threshold. This can produce high sparsity, but runtime gains depend on sparse-kernel support.
+
+	For embedded targets, structured pruning is usually more practical. Instead of removing isolated scalar weights, it removes entire filters, channels, or blocks, so tensor shapes are reduced and dense kernels remain usable. This is typically more hardware-friendly than irregular sparsity on microcontrollers \cite{li2019pruning}. A common pipeline alternates prune-and-fine-tune steps to recover accuracy after each sparsification stage.
+
+	In bird audio classification, pruning is especially valuable when models must run continuously on battery-powered devices. The challenge is preserving minority-class discrimination while reducing parameters, which is why pruning is often combined with distillation and quantization rather than applied in isolation.
 	\subsection{Why Compression Is Not Always Applied on Embedded Targets}
+	Although compression is often presented as mandatory for embedded AI, in practice it is not always the best first move. A compressed model can be smaller, but the full deployment pipeline becomes more fragile: calibration data for quantization must be representative, operator support in embedded runtimes may be incomplete, and conversion/verification effort increases. For many teams, engineering reliability and reproducibility can dominate the theoretical compression gain \cite{abadade2023tinymlsurvey,singh2023edgeaisurvey}.
+
+	A second issue is error distribution. Aggressive quantization or pruning may preserve global accuracy while degrading difficult or minority classes. In ecological audio tasks this can be critical, because the most valuable classes are often the most confusable ones. For this reason, compression decisions should be validated with class-aware metrics and confusion analysis, not only with aggregate top-line accuracy \cite{tao2022energy,wuint8quant2020,li2019pruning}.
+
+	A third point is that model weights are not always the dominant bottleneck. On real devices, significant energy is often spent in sensing, buffering, feature extraction, and communication. If those components dominate the budget, model-only compression provides limited system-level gain. Consequently, compression should be treated as one instrument in a co-design process, and enabled when measurements on target hardware show a concrete net benefit \cite{tao2022energy,singh2023edgeaisurvey}.
 	\subsection{Efficient Neural Network Design}
+	Because of these constraints, many successful edge systems follow an efficiency-by-design strategy rather than a compress-afterwards strategy. The idea is to start from architectures that are structurally lightweight, for example through depthwise-separable convolutions, compact bottlenecks, and reduced activation footprints, then refine them for the specific task \cite{mobilenetv2,matchboxnet2020,phinets2022}.
+
+	In audio, this translates to a full pipeline choice: compact spectral front-end, low-footprint temporal encoder, and small classifier head, all selected to match device limits and target latency. Recent TinyML bioacoustic studies confirm that this approach can support continuous inference with practical accuracy when the architecture and deployment stack are co-optimized from the start \cite{sabbella2022alwayson,tinychirp2024,paissan2022scalableaudio}.
+
+	From a methodological perspective, efficient design should be evaluated with multi-objective criteria: accuracy, latency, memory occupancy, and energy per inference. This thesis follows that same principle and treats model design, training strategy, and deployment profiling as one integrated engineering problem rather than separate phases \cite{abadade2023tinymlsurvey,singh2023edgeaisurvey}.
 
 	\section{Bioacoustics and Conservation Technology}
-	\subsection{Domain Overview}
+	\subsection{General Overview}
+	Bioacoustics studies biological systems through sound, while conservation technology focuses on operational tools that transform ecological observations into actionable monitoring workflows. Passive acoustic monitoring is a central bridge between these areas: autonomous recorders collect long-duration soundscapes, and machine learning models process them to estimate species presence, temporal activity, and habitat-level indicators \cite{nietomora2023systematic,birdnet2021}.
+
+	In practice, bird monitoring pipelines are exposed to three persistent data realities. First, many recordings are weakly labeled, because annotation is often clip-level rather than event-level. Second, class distributions are heavily imbalanced, with a small subset of frequent species and many rare classes. Third, deployment conditions differ from training conditions due to microphone differences, environmental noise, and seasonal variation. This domain shift is a known source of performance degradation and requires explicit evaluation design, not only larger models \cite{stowell2019birdaudiodetection,birdnet2021,sheikh2024birdwhisperer}.
+
+	A second operational aspect is decision calibration. In ecological workflows, probability thresholds control a concrete trade-off between false alarms and missed detections. This choice directly affects manual verification effort, storage usage, and ecological interpretation quality, so threshold selection must be treated as a first-class methodological variable rather than a post-hoc tuning detail \cite{perezgranados2023birdnet,stowell2019birdaudiodetection}.
 	\subsection{Motivation and Practical Impact}
+	The motivation of this thesis is to close the gap between research-grade bird classifiers and deployable field systems. Many high-performing models are designed for server-side processing and are difficult to operate continuously on low-power devices. Conversely, many lightweight models are deployable but lose discrimination power on acoustically similar species groups. A practical system for conservation monitoring must satisfy both conditions simultaneously: ecological usefulness and hardware feasibility.
 
-	\chapter{Related Work}
-	\section{Automated Bioacoustic Monitoring of Bird Species}
-	\section{Edge and Low-Power Wildlife Monitoring Systems}
-	\section{Audio Front-End Design for Embedded Classification}
+	The practical impact is direct. Reliable on-device first-pass classification can reduce unnecessary recording storage, decrease transmission load in connected deployments, and extend battery autonomy in remote campaigns. This reduces maintenance effort and improves continuity of long-term biodiversity observation programs \cite{sabbella2022alwayson,tinychirp2024,gallacher2021shazam}.
 
-	\chapter{Extended Study and Implementation}
-	\section{Extending the ICASSP Approach}
+	\subsection{Research Objectives and Scope}
+	The thesis addresses multi-species bird sound classification under low-power embedded constraints. The objective is not to maximize isolated benchmark accuracy, but to design and validate an end-to-end pipeline that remains discriminative under realistic field variability and executable on microcontroller-class hardware.
+
+	The main objectives are:
+	\begin{enumerate}
+		\item to design a compact architecture that jointly optimizes representation quality and deployment cost;
+		\item to study front-end alternatives (fixed, semi-learnable, and fully learnable) under controlled comparative settings;
+		\item to improve difficult-class behavior through focal-distillation training, with explicit attention to imbalance and class confusion;
+		\item to validate the system with both offline metrics and on-device measurements, including latency, memory, and energy-oriented analyses.
+	\end{enumerate}
+
+	Scope is intentionally operational. The target problem is closed-set classification with an explicit ``no bird'' class, within species pools relevant to realistic monitoring deployments. This thesis does not aim to replace globally scoped cloud systems; instead, it focuses on robust local specialization and edge-executable inference under strict resource budgets.
+
+	\subsection{Evaluation Protocol and Validity Considerations}
+	Evaluation follows a class-aware and deployment-aware protocol. Alongside accuracy, the analysis uses weighted \(F1\), row-normalized confusion matrices, and confusion-pair inspection to characterize hard species interactions. At decision level, threshold effects are treated explicitly because precision/recall balance has direct operational consequences in ecological monitoring \cite{perezgranados2023birdnet,stowell2019birdaudiodetection}.
+
+	From the deployment perspective, model viability is validated beyond parameter count through runtime behavior on target-oriented hardware settings: memory footprint, latency, and stability of converted models. This reflects the practical issues highlighted by edge deployment studies, where toolchain conversion details and operator support can materially affect final behavior \cite{abadade2023tinymlsurvey,singh2023edgeaisurvey,zylinski2024deployment}.
+
+	The main validity risks are dataset shift, weak-label noise, class-imbalance bias, and hardware-specific variability. The thesis addresses these risks through controlled splits, subset-based stress tests on difficult taxa, calibration-oriented analysis, and direct on-device benchmarking. These mitigations do not remove all external-validity limits, but they make the evaluation assumptions explicit and reproducible.
+
+	\subsection{Thesis Structure}
+	This thesis is organized into five chapters, progressing from context to implementation and finally to deployment-oriented conclusions.
+
+	Chapter~1 presents the abstract.
+	Chapter~2 introduces the technical and application context. It first frames Edge AI and TinyML constraints, then discusses bioacoustics and conservation technology as the target domain. The chapter also defines the research scope, objectives, and evaluation criteria used throughout the work.
+	Chapter~3 reviews the most relevant literature on species monitoring, compact audio models, learnable front-ends, and low-power deployment strategies, and identifies the specific research gap addressed by this thesis.
+
+	Chapter~4 is the core technical chapter. It reports the extended study, including the semi-learnable front-end design, model architecture, dataset construction and preprocessing pipeline, experimental setup, comparative experiments, and result analysis. The same chapter then covers edge deployment on AudioMoth and the device-level benchmarking protocol, so model quality and hardware feasibility are evaluated within one consistent framework.
+
+	Chapter~5 concludes the thesis by summarizing the main findings, discussing current limitations, and outlining future work on model scaling, quantized deployment refinement, and broader field validation.
+
+	\chapter{Related Works}
+	\section{Species Monitoring Works}
+	Ecoacoustics studies ecological systems through their acoustic behavior. In practice, this means recording natural soundscapes over time and extracting biological information from the recordings. The enabling technology is passive acoustic monitoring, where autonomous recording units are deployed in the field and left to collect long-term audio streams without continuous human presence. This paradigm has become central in biodiversity studies because it expands spatial and temporal coverage compared to manual surveys, but it also creates a new bottleneck: analysis now scales poorly unless automated methods are used \cite{nietomora2023systematic}.
+
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=0.95\textwidth]{images/soundscape_ecology_ml_frameworks.png}
+		\caption{Soundscape-ecology data processing workflow with machine-learning stages for ecoacoustic monitoring. Source: Nieto-Mora et al. \cite{nietomora2023systematic}.}
+		\label{fig:soundscape_ecology_ml_workflow}
+	\end{figure}
+
+	In this context, the literature distinguishes several related but different tasks. Acoustic detection identifies whether a target class of events is present. Species classification determines which species generated the signal. Event segmentation defines temporal boundaries of vocalizations inside a recording. Ecological inference then uses these outputs to estimate indicators such as richness, occupancy, or temporal activity profiles. The distinction is important because model errors at early stages propagate downstream. A detection system with a high false-positive tendency can bias ecological indicators even when the classifier itself is strong. This is one of the reasons why recent studies increasingly evaluate complete analysis pipelines rather than isolated model components \cite{nietomora2023systematic,perezgranados2023birdnet}.
+
+	\subsection{Automated Bird Sound Detection and Classification}
+	The first broad milestone for modern bird audio detection was the Bird Audio Detection challenge, which made explicit the need for robust generalization across datasets, recording devices, and environmental conditions \cite{stowell2019birdaudiodetection}. The relevance of this work is not only the achieved performance, but the evaluation philosophy: models were compared under realistic domain shift, making clear that laboratory-level scores do not automatically transfer to field-level reliability.
+
+	A second major milestone is BirdNET, which established a large-scale multi-species recognition framework and demonstrated that deep architectures, combined with task-specific training strategies, can support practical biodiversity workflows \cite{birdnet2021}. BirdNET is significant because it moved the field from proof-of-concept models toward operational analysis of long recordings at taxonomic scale. Successive studies then shifted from pure adoption to critical analysis, especially regarding confidence thresholds, precision--recall trade-offs, and context-dependent calibration policies \cite{perezgranados2023birdnet}. This line of work highlights that threshold selection is not a secondary technical parameter but an ecological design decision, since different monitoring goals require different error profiles.
+
+	The classification literature also reports persistent data-related challenges. Public repositories provide large quantities of recordings, but label quality and class distribution are uneven. Many datasets are weakly labeled, highly imbalanced, and geographically heterogeneous, creating strong domain mismatch between training and deployment scenarios. This has motivated extensive use of augmentation, transfer learning, and domain adaptation. Recent work based on large pre-trained acoustic encoders confirms this trend, showing that strong representations can be transferred to bird classification when adaptation is carefully designed for class imbalance and non-stationary background conditions \cite{sheikh2024birdwhisperer}.
+
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=0.95\textwidth]{images/birds_pipeline.png}
+		\caption{Bird Whisperer methodology overview: top, classification pipeline from waveform spectrogram through encoder and compact prediction head; bottom, augmentation and class-imbalance mitigation workflow. Source: Sheikh et al. \cite{sheikh2024birdwhisperer}.}
+		\label{fig:bird_whisperer_pipeline}
+	\end{figure}
+
+	\subsection{Cross-Domain Wildlife Monitoring Insights}
+	Adjacent taxa, especially bats, provide useful methodological parallels for bird monitoring. Bat acoustic pipelines face severe constraints in bandwidth, event sparsity, and noise, yet they address the same structural problem of converting massive passive recordings into reliable ecological evidence. Deep-learning-based open pipelines for bat detection showed clear gains over traditional rule-based approaches under noisy conditions \cite{macaodha2018batdetective}. Subsequent IoT deployments demonstrated that edge-side filtering and event-centric transmission can drastically reduce storage and communication loads while preserving ecological utility \cite{gallacher2021shazam}.
+
+	These results are relevant for bird monitoring because they reinforce a general principle: model quality must be evaluated jointly with acquisition strategy, compute placement, and downstream ecological use. In other words, recognition models are one component of a full cyber-physical monitoring system.
+
+	\subsection{Edge AI and TinyML for Bioacoustics}
+	Remote and long-duration deployments make edge computation a central requirement. Cloud-centric processing remains useful for retrospective analysis, but many field scenarios benefit from local inference to reduce energy, bandwidth, and memory pressure. TinyML literature addresses this requirement by designing models and runtimes for microcontroller-class devices.
+
+	AudioMoth and similar devices made large-scale acoustic campaigns economically feasible, but they also exposed practical limits of continuous full-resolution logging \cite{audiomoth2019}. This is why always-on classifiers have become central in low-power ecoacoustics. Existing studies show that lightweight on-device classifiers can run for extended periods while preserving acceptable recognition quality, enabling selective storage and adaptive duty cycles \cite{sabbella2022alwayson,tinychirp2024}. The same direction is visible in broader AI-IoT architectures for bird monitoring, where communication infrastructure and model design are co-optimized for operational continuity \cite{seguragarcia2024}.
+
+	At architectural level, the literature converges around compact convolutional families based on depthwise-separable operations, residual paths, and scalable width/depth configurations. MobileNetV2 formalized key efficiency principles that later influenced many embedded audio systems \cite{mobilenetv2}. MatchboxNet translated these principles into 1D temporal processing for low-footprint keyword and sound recognition \cite{matchboxnet2020}, while PhiNets and related scalable backbones emphasized explicit resource-aware design spaces \cite{phinets2022,paissan2022scalableaudio}.
+
+	\subsection{Audio Representation and Learnable Front-Ends}
+	The front-end representation used before high-level classification is another decisive design axis. Classical pipelines rely on fixed time--frequency transforms, usually STFT-derived spectrograms and mel-scaled filterbanks, because they provide stable and interpretable features. However, bird vocalizations present strong inter-species overlap and context-dependent spectral variability, which can limit purely fixed representations.
+
+	This motivated the development of learnable or partially learnable front-ends. SincNet introduced constrained parameterized filters with clear physical interpretation, improving interpretability and parameter efficiency in waveform-based processing \cite{ravanelli2019sincnet}. LEAF further generalized learnable front-end design as a drop-in alternative to mel filterbanks, showing broad applicability across audio domains \cite{zeghidour2021leaf}. In parallel, discriminative and parametric filter-bank studies proposed optimization of center frequencies, bandwidths, gains, and filter shapes directly from data, balancing flexibility with structural priors \cite{zhangwu2019discriminative,caiko2023parametric,peictukuljac2022learnable}.
+
+	This branch of literature is directly relevant for embedded bird classification because front-end choice affects both accuracy and deployment cost. A representation that is acoustically informative but computationally heavy may be unsuitable for long-term edge deployment, while a compact representation that misses discriminative details can fail on hard species subsets.
+
+	\subsection{Compression and Training Strategies for Constrained Deployment}
+	The constrained deployment literature repeatedly converges on the same point: compact architecture design and compression-aware training must be co-optimized, and performance must be assessed with real device metrics, not only with parameter count. Across studies, quantization, pruning, and distillation are the most recurrent techniques for obtaining deployable models under strict memory and power budgets \cite{wuint8quant2020,li2019pruning,hinton2015distilling}. Their practical impact, however, depends strongly on runtime kernels and hardware characteristics, which is why microcontroller-oriented analyses increasingly report latency, power, and energy jointly \cite{tao2022energy}.
+
+	\subsection{Synthesis and Research Gap}
+	The reviewed literature shows a clear progression: from isolated recognition models to integrated ecological monitoring systems that must remain accurate, efficient, and robust under field variability. Existing studies provide strong foundations in three directions: large-scale bird recognition, low-power deployment, and adaptive front-end design. At the same time, a concrete gap remains at their intersection. Many high-accuracy models are too heavy for always-on edge operation; many tiny models lose discriminative power on difficult species groups; many front-end studies are validated outside strict low-power multi-species field scenarios.
+
+	This gap motivates the present contribution: a compact bird classification pipeline that explicitly co-designs representation learning, architecture efficiency, and edge deployment constraints, with special focus on semi-learnable front-end behavior in realistic multi-species monitoring conditions.
+	
+	Unlike globally scoped classifiers, the proposed approach is intentionally compatible with specialization on the species set of a specific geographic area. This choice is aligned with real ornithological and environmental monitoring practice, where target taxa, prevalence, and acoustic confounders are strongly site-dependent. By focusing representational capacity on the locally relevant class space, the system can improve practical discrimination in the deployment context instead of spending model budget on species that are not expected in that region \cite{birdnet2021}. The operational impact is concrete. When inference is executed directly on a low-power field device, battery autonomy supports longer unattended deployments \cite{audiomoth2019,tinychirp2024}. This reduces the need for frequent retrieval trips in remote sites and, because first-pass classification is already measurably effective, it also reduces the amount of audio that must be manually re-analyzed by domain experts.
+
+	\chapter{Study and Implementation}
+	This chapter presents the complete technical study behind the proposed system, from the problem definition to the implementation choices and the experimental evidence.
+	\section{Extended ICASSP Study}
+	\subsection{Problem Definition and Project Scope}
+	The project addresses \emph{multi-class bird sound classification}. Multi-class classification means that, given one input clip \(x\), the model must select exactly one label among \(C\) possible classes. In this work, the classes are bird species plus one additional negative class representing the absence of bird vocalizations. If \(p(c \mid x)\) denotes the predicted probability for class \(c\), the decision is made by selecting the class associated with the highest probability.
+
+	What makes bird sound classification difficult is not only the number of classes, but the acoustic structure of bird vocalizations. Some species are highly distinctive and occupy relatively specific frequency regions. Other species are acoustically close, especially when they belong to the same family or when their calls are short, weak, or partially masked by background noise. The same species can also vary strongly across individuals, seasons, distances from the microphone, and behavioral context. In practice, this creates a simultaneous inter-class overlap problem and intra-class variability problem.
+
+	The project also targets edge deployment, where memory, latency, and energy are constrained \cite{audiomoth2019}. This changes the design objective. The goal is not only maximizing absolute accuracy, but obtaining a model that remains robust while being small and energy-efficient. This is why the system is designed as a compact end-to-end architecture with a carefully structured spectral front-end and a training strategy that transfers knowledge from a stronger teacher model \cite{birdnet2021,hinton2015distilling}.
+
+	\subsection{Dataset}
+	\subsubsection{Dataset Composition and Class Definition}
+	The dataset is designed as a multi-source training ecosystem rather than a single repository of clips. Positive classes correspond to bird species, and each sample in these classes contains a vocal event that should be recognized as one label among many possible species. The central practical requirement is to solve a \emph{closed-set multi-class decision}: for each 3-second audio window, the model must output one class index from the available species set plus one additional class that represents the absence of bird vocalizations.
+
+	\subsubsection{Data Sources and API Queries}
+	Bird-positive material is collected from species-labeled field recordings, with Xeno-canto serving as a major source of ecological variability \cite{xenocanto}. This variability is not noise in the negative sense; it is part of the target problem. Different microphones, habitats, propagation distances, weather conditions, and background communities produce strong distribution shift, and a model that is trained only on ``clean'' examples fails when deployed in uncontrolled environments.
+
+	Environmental audio from ESC-50 is integrated to represent realistic non-bird acoustic conditions \cite{esc50}. The role of this source is twofold. First, it helps construct a robust negative class that prevents systematic false alarms. Second, it provides a diverse background library for augmentation, so bird calls can be learned under controlled interference levels. In passive monitoring, the majority of windows contains no target vocalization, therefore the ``no bird'' class is a structural component of the task and not an auxiliary engineering trick.
+
+	The acquisition stage is large-scale. An automated query pipeline collects raw field recordings for the selected species and yields 150,645 downloaded files before quality filtering and segmentation. After mono conversion, resampling, validation checks, and fixed-length clip construction, the effective corpus used for training and evaluation contains 150,557 clips of 3 seconds each. Reporting both numbers is important: the first quantifies collection scope, while the second quantifies the material that is actually usable for supervised learning under strict preprocessing constraints.
+
+	\subsubsection{Species Coverage and Subset Strategy}
+	The complete species pool used in the project contains seventy bird classes, to which an explicit ``no bird'' class is added in training and evaluation. The full inventory covers raptors, owls, swifts, swallows, woodpeckers, treecreepers, tits, warblers, thrushes, finches, corvids, and other passerines, thus exposing the model to broad ecological and acoustic diversity.
+
+	The species set includes \emph{Accipiter gentilis}, \emph{Aegithalos caudatus}, \emph{Aegolius funereus}, \emph{Apus apus}, \emph{Ardea cinerea}, \emph{Asio otus}, \emph{Athene noctua}, \emph{Bubo bubo}, \emph{Buteo buteo}, \emph{Caprimulgus europaeus}, \emph{Carduelis carduelis}, \emph{Certhia brachydactyla}, \emph{Certhia familiaris}, \emph{Chloris chloris}, \emph{Coccothraustes coccothraustes}, \emph{Columba palumbus}, \emph{Corvus corax}, \emph{Cuculus canorus}, \emph{Curruca communis}, \emph{Cyanistes caeruleus}, \emph{Delichon urbicum}, \emph{Dendrocopos major}, \emph{Dryobates minor}, \emph{Dryocopus martius}, \emph{Emberiza cia}, \emph{Emberiza cirlus}, \emph{Erithacus rubecula}, \emph{Falco tinnunculus}, \emph{Ficedula hypoleuca}, \emph{Fringilla coelebs}, \emph{Garrulus glandarius}, \emph{Hirundo rustica}, \emph{Jynx torquilla}, \emph{Lanius collurio}, \emph{Lophophanes cristatus}, \emph{Milvus milvus}, \emph{Motacilla alba}, \emph{Motacilla cinerea}, \emph{Muscicapa striata}, and \emph{Oriolus oriolus}.
+
+	The same pool continues with \emph{Otus scops}, \emph{Parus major}, \emph{Passer montanus}, \emph{Periparus ater}, \emph{Pernis apivorus}, \emph{Phoenicurus ochruros}, \emph{Phoenicurus phoenicurus}, \emph{Phylloscopus bonelli}, \emph{Phylloscopus collybita}, \emph{Phylloscopus sibilatrix}, \emph{Picus canus}, \emph{Picus viridis}, \emph{Poecile montanus}, \emph{Poecile palustris}, \emph{Prunella modularis}, \emph{Pyrrhula pyrrhula}, \emph{Regulus ignicapilla}, \emph{Regulus regulus}, \emph{Serinus serinus}, \emph{Sitta europaea}, \emph{Spinus spinus}, \emph{Strix aluco}, \emph{Sturnus vulgaris}, \emph{Sylvia atricapilla}, \emph{Troglodytes troglodytes}, \emph{Turdus merula}, \emph{Turdus philomelos}, \emph{Turdus pilaris}, \emph{Turdus viscivorus}, and \emph{Upupa epops}.
+
+	Beyond full-pool training, the experimental campaign uses targeted subsets to isolate specific difficulty factors. A core \(8(+1)\) subset (\emph{Poecile montanus}, \emph{Certhia familiaris}, \emph{Apus apus}, \emph{Bubo bubo}, \emph{Periparus ater}, \emph{Emberiza cia}, \emph{Lophophanes cristatus}, \emph{Certhia brachydactyla}, plus ``no bird'') is used for direct front-end comparisons, including semi-learnable versus fully learnable variants under matched conditions. An ``easy species'' \(8(+1)\) subset (\emph{Ardea cinerea}, \emph{Corvus corax}, \emph{Falco tinnunculus}, \emph{Hirundo rustica}, \emph{Otus scops}, \emph{Phylloscopus collybita}, \emph{Picus canus}, \emph{Strix aluco}) is used to characterize upper-bound behavior when class separation is more favorable. A ``hard species'' \(13(+1)\) subset is designed around known confusions, including close taxonomic or acoustic pairs such as \emph{Parus major}/\emph{Periparus ater}, \emph{Regulus regulus}/\emph{Regulus ignicapilla}, and \emph{Certhia familiaris}/\emph{Certhia brachydactyla}, together with multiple \emph{Turdus} species and additional confounders.
+
+	Additional subset studies include monoclass settings, a two-class hard-couple setting focused on the two \emph{Regulus} species, and frequency-focused subsets. The high-frequency-focused subset includes \emph{Serinus serinus}, \emph{Prunella modularis}, \emph{Regulus ignicapilla}, \emph{Troglodytes troglodytes}, and \emph{Apus apus}; the low-frequency-focused subset is centered on species such as \emph{Caprimulgus europaeus}, \emph{Corvus corax}, \emph{Upupa epops}, and \emph{Ardea cinerea}. The methodological reason for this subset design is controlled analysis: each subset emphasizes one dominant factor, such as inter-class similarity, spectral-region dependence, or negative-class calibration, so architectural and loss-function effects can be interpreted with less confounding than in full-pool training alone.
+
+	\subsubsection{Negative-Class Construction and Balancing Strategy}
+	The negative class is constructed from two complementary acoustic populations. The first population contains environmental sounds with no bird target, sampled from selected ESC-50 categories that include both natural contexts and anthropogenic disturbances. In practice, a focused subset of fourteen categories is used so the acoustic conditions remain realistic for field monitoring. The second population contains acoustically empty segments extracted directly from bird-recording sessions. This second source is essential because it captures recorder-specific floor noise, wind texture, distant background communities, and site-dependent silence profiles that are typically absent from curated environmental datasets.
+
+	Using both sources avoids a degenerate ``no bird'' prototype. If negatives came only from external environmental datasets, the model could overfit to dataset identity rather than to the semantic concept ``no target bird vocalization''. If negatives came only from in-domain silence, it could remain weak against structured non-bird events such as rain bursts, traffic components, or mechanical sounds. A balanced mixture of environmental and empty-segment negatives gives broader coverage and reduces brittle decision boundaries.
+
+	The dataset can be assembled in a static mode or in a dynamic mode. In static mode, a pre-built negative pool is reused across runs to maximize reproducibility during controlled comparative studies. In dynamic mode, negatives are regenerated during loading, increasing stochastic diversity across epochs. In the default setting, environmental negatives and empty-segment negatives are combined with a 50:50 ratio before final class balancing. The number of negatives is then controlled by matching it to the average number of examples per bird class:
+	\begin{equation}
+		N_{\mathrm{neg}}^{\star} = \frac{1}{K}\sum_{k=1}^{K} N_k,
+	\end{equation}
+	where \(K\) is the number of bird species classes and \(N_k\) is the sample count of class \(k\). This rule keeps optimization pressure comparable between bird and non-bird decisions without forcing artificial uniformity across all species.
+
+	When one source provides fewer negatives than expected, the balancing stage applies a controlled fallback strategy that preserves training continuity and keeps the resulting class composition explicit. This avoids hidden ratio drift and improves comparability across experiments.
+
+	\subsubsection{Preprocessing}
+	All sources are transformed into a common representation before any learning stage. Stereo recordings are converted to mono to remove channel inconsistency, then resampled to 32~kHz and mapped to fixed 3-second windows. A fixed temporal support is required by the neural architecture and also stabilizes batching, memory allocation, and gradient statistics during training.
+
+	The preprocessing stage also handles common field-data quality problems. Input validity is checked before feature extraction, and malformed or unreadable recordings are managed through controlled fallback behavior so that isolated file failures do not interrupt long training runs. The same normalization policy is applied across common recording formats, allowing heterogeneous acquisition campaigns to be merged into a coherent dataset.
+
+	For positive samples, segmentation is call-centered rather than random. The signal is first band-pass filtered in the range 150--16,000~Hz, which suppresses irrelevant very-low-frequency drift and high-frequency artifacts while preserving the dominant spectral support of bird vocalizations. An amplitude envelope is then computed on short overlapping windows, typically 50~ms with 10~ms hop, to obtain a robust temporal trace of acoustic salience.
+
+	Peak selection uses adaptive statistics so thresholds follow each recording rather than being fixed globally. Prominence is estimated through the median and the median absolute deviation (MAD):
+	\begin{equation}
+		\theta_{\mathrm{prom}} = \mathrm{median}(e) + 1.5\,\mathrm{MAD}(e),
+	\end{equation}
+	where \(e\) is the envelope sequence. A minimum peak distance of approximately 1 second prevents repeated detections of the same vocal event, and percentile filtering (for example around the upper quartile of peak heights) discards weak candidates that are unlikely to contain discriminative species information. Each selected event is centered inside the 3-second crop to maximize informative content. When no reliable peak is found, a deterministic fallback segment is extracted from the initial part of the recording, so the pipeline remains robust and does not fail on low-energy or weakly vocal clips.
+
+	Empty-segment extraction follows the same statistical philosophy. Frame-level energy is estimated and low-activity intervals are selected through robust thresholds, avoiding fragile absolute cutoffs. A practical rule is
+	\begin{equation}
+		\theta_{\mathrm{sil}} = 0.5 \cdot \mathrm{median}(E),
+	\end{equation}
+	with \(E\) denoting frame-level energy. Candidate segments are separated in time to avoid highly redundant crops, and per-recording extraction can be capped (for example to five segments) to prevent very quiet recordings from dominating the negative pool. Segment management is pooled and seed-controlled so reuse remains efficient while preserving split isolation and diversity. This procedure yields realistic negatives that preserve ambient acoustic identity, unlike synthetic zero-signal segments.
+
+	\subsubsection{Dataset Split Policy and Effective Usage During Training}
+	Data partitioning is fixed and reproducible. The standard split uses 70\% of data for training, 15\% for validation, and 15\% for testing, with deterministic seeding so experimental comparisons remain scientifically valid. Label indexing is deterministic as well: species classes occupy a stable index range and ``no bird'' is appended as an explicit additional class.
+
+	Environmental data are split with leakage control. ESC-50 fold allocation is aligned with the global partition strategy, with folds 1--3 used in training, fold 4 in validation, and fold 5 in testing. This design limits the risk that near-duplicate background structures appear across train and evaluation phases.
+
+	Only training samples pass through stochastic augmentation. Validation and test flows remain deterministic and acoustically faithful to the split content. This is essential for attribution: if evaluation were also augmented, measured differences between architectures or losses would be confounded by random transformation noise rather than reflecting true generalization changes.
+
+	\subsubsection{Stochastic Acoustic Augmentation and SNR-Controlled Mixing}
+	Augmentation is applied online during training to maximize diversity without inflating storage with pre-rendered variants. For each sample, up to two random transformations are composed, which is a compromise between robustness and acoustic plausibility. Temporal transformations include circular time shifts up to roughly \(\pm 10\%\) of clip duration and mild speed perturbation in the range 0.95--1.05. Spectral transformations include time masking (up to about 30 frames), frequency masking (up to about 10 bins), and low-level additive Gaussian noise with standard deviation around 0.01.
+
+	Time masking hides short temporal intervals in the time--frequency representation, forcing the model to recognize species cues from incomplete evidence. Frequency masking hides narrow spectral bands, reducing reliance on single-bin artifacts and encouraging distributed feature use. Gaussian noise injection approximates electronic and environmental noise floors and improves tolerance to low-SNR recordings.
+
+	Background mixing is the most deployment-relevant augmentation. Target bird clips are mixed with environmental audio at controlled signal-to-noise ratio, typically sampled in the range 5--15~dB. SNR is defined as
+	\begin{equation}
+		\mathrm{SNR}_{\mathrm{dB}} = 10 \log_{10}\!\left(\frac{P_{\mathrm{signal}}}{P_{\mathrm{noise}}}\right).
+	\end{equation}
+	To enforce a target SNR, the background waveform is power-scaled before summation:
+	\begin{equation}
+		\alpha = \sqrt{\frac{P_{\mathrm{signal}}}{P_{\mathrm{noise}} \cdot 10^{\mathrm{SNR}_{\mathrm{dB}}/10}}}, \qquad
+		x_{\mathrm{mix}} = x_{\mathrm{signal}} + \alpha\,x_{\mathrm{noise}}.
+	\end{equation}
+	This power-aware rule keeps mixing physically interpretable and reproducible. Background clips are cropped or tiled to match 3 seconds, and random offsets are used so the model does not repeatedly observe the same alignment patterns. The environmental pool includes both natural contexts (such as wind, rain, and water-related sounds) and anthropogenic contexts (such as traffic-like mechanical components), so robustness is learned across heterogeneous interference types. High-SNR cases preserve fine call detail, while low-SNR cases teach resilience to masking and overlap.
+
+	When frequency-domain augmentations are applied, the pipeline keeps consistency between spectral edits and waveform-domain training input. Dynamic-range control in decibel space and phase-consistent reconstruction are used where needed to avoid acoustically implausible artifacts that could destabilize optimization.
+
+	\subsubsection{Why This Pipeline Works for Edge Deployment}
+	The pipeline works because it aligns statistical training conditions with operational reality. Call-centered extraction increases the information density of positive examples, which improves sample efficiency for compact models. The dual-source negative class reduces false positives by teaching both structured environmental distractors and recorder-specific quiet conditions. Controlled augmentation expands the effective support of the training distribution without breaking acoustic plausibility.
+
+	From an edge-computing perspective, this is critical. Small models have limited representational redundancy, so they are sensitive to mismatch between training and deployment audio. By explicitly modeling background diversity, silence structure, and SNR variability during training, the system reduces this mismatch and improves stability in long-duration passive monitoring, where low false-alarm rates and consistent behavior are as important as top-line accuracy.
+
 	\subsection{Semi-Learnable Filter Design}
+	\subsubsection{Why a Semi-Learnable Front-End}
+	Audio classification models operate on waveform samples and first map them to a time--frequency representation, where spectral patterns can be modeled over time. In bird bioacoustics, a fully fixed spectral mapping can be too rigid because species cues are distributed differently across frequency bands, recording conditions, and subsets of classes. As a result, a single predefined scale may allocate too much resolution to some regions and too little to others.
+
+	A fully learnable front-end increases flexibility but can be harder to optimize and more prone to overfitting, especially under constrained-data or constrained-compute settings. The semi-learnable design used here keeps a structured and interpretable filterbank based on triangular filters, while learning only a small set of global parameters that control how spectral resolution is distributed. This preserves strong inductive bias and enables task-specific adaptation at the same time.
+
+	\subsubsection{Mathematical Formulation}
+	Let \(N\) be the number of filters and \(x_i=\frac{i}{N-1}\) the normalized filter index. Two frequency mappings are defined. The first one is logarithmic,
+	\begin{equation}
+		f_{\log}(x_i)=f_{\min}\left(\frac{f_{\max}}{f_{\min}}\right)^{x_i},
+	\end{equation}
+	and the second one is linear,
+	\begin{equation}
+		f_{\mathrm{lin}}(x_i)=f_{\min}+x_i(f_{\max}-f_{\min}).
+	\end{equation}
+	The model combines these two mappings through a sigmoid gate:
+	\begin{equation}
+		S(x_i;b,w)=\sigma\!\left(\left(x_i-\frac{b-f_{\min}}{f_{\max}-f_{\min}}\right)w\right),
+	\end{equation}
+	where \(b\) is the breakpoint and \(w\) is the transition width. The final center frequency of each filter is
+	\begin{equation}
+		f_i=(1-S(x_i;b,w))\,f_{\log}(x_i)+S(x_i;b,w)\,f_{\mathrm{lin}}(x_i).
+	\end{equation}
+	These centers define a triangular filterbank applied to STFT magnitudes. If \(X_t(k)\) is the STFT magnitude at time frame \(t\) and frequency bin \(k\), and \(H_m(k;b,w)\) is filter \(m\), the filtered representation is
+	\begin{equation}
+		Z_m(t)=\sum_{k} H_m(k;b,w)\,X_t(k).
+	\end{equation}
+	Since \(b\) and \(w\) are differentiable parameters, gradients from the final classification loss can update the spectral allocation.
+
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=0.9\textwidth]{images/filterbanks_position_frequency.png}
+		\caption{Filter position over frequency for the implemented semi-learnable front-end, showing how spectral allocation is controlled across the bank.}
+		\label{fig:filterbanks_position_frequency}
+	\end{figure}
+
+	\subsubsection{Spectrogram Representation Families Evaluated}
+	The study compares four representation families. The first is mel spectrogram projection, which applies perceptually motivated non-uniform spacing and is a strong baseline for generic acoustic similarity. The second is linear-STFT representation, where frequency bins are uniformly spaced and high-frequency detail is preserved explicitly. The third is linear triangular projection, which keeps linear frequency emphasis while reducing dimensionality through a compact triangular filterbank. The fourth, and strongest in the evaluated configurations, is an adaptive combined log--linear representation, where the final spectral map is produced by mixing logarithmic and linear components with a differentiable transition.
+
+	A compact expression of this mixed representation is
+	\begin{equation}
+		S_{\mathrm{combined}} = \alpha \odot S_{\log} + (1-\alpha)\odot S_{\mathrm{linear}},
+	\end{equation}
+	where \(\alpha\) is frequency-dependent and controlled by the learnable transition parameters. In the notation of the previous subsection, \(\alpha\) is implemented through the sigmoid gate \(S(x_i;b,w)\), so the model learns where log emphasis and linear emphasis should dominate.
+
+	Across the tested configurations, this adaptive representation gives the best accuracy--efficiency balance. In dedicated nine-class distilled runs, it reaches high-80s test accuracy, with best observed performance around \(88.37\%\), while remaining compatible with compact edge-oriented models.
+
+	\subsubsection{Fixed, Semi-Learnable, and Fully Learnable Filter Banks}
+	A fixed filterbank has zero trainable front-end parameters and therefore minimal optimization overhead, but it cannot adapt its spectral allocation to the actual class set. A fully learnable filterbank removes this structural prior and learns each coefficient independently. If the front-end uses \(N\) filters and \(K\) frequency bins, the filter matrix \(F\in\mathrm{R}^{N\times K}\) is fully trainable and produces
+	\begin{equation}
+		Z_m(t)=\sum_k F_{m,k}\,|X_t(k)|.
+	\end{equation}
+	With \(N=64\) and \(K=513\), this introduces \(64\times513=32{,}832\) trainable front-end parameters.
+
+	The semi-learnable alternative keeps the triangular structure and optimizes only the global transition parameters \(b\) and \(w\). In practical terms, this is a difference between \(2\) trainable front-end parameters and \(32{,}832\). In compact student settings this gap is substantial: moving from a \(\sim 53{,}516\)-parameter baseline to a fully learnable front-end variant raises parameter count to \(\sim 86{,}348\), an increase of about \(61.4\%\). The semi-learnable design avoids this cost while preserving adaptation capacity and interpretability.
+
+	This difference is not only a memory issue. A fully learnable front-end must optimize thousands of unconstrained coefficients, which increases training variance and can overfit dataset-specific artifacts. The combined log--linear front-end instead constrains the hypothesis space with a physically meaningful parameterization and learns only where the log-to-linear transition should occur and how smooth that transition should be. This usually improves optimization stability, keeps the learned representation interpretable, and reduces computational and engineering cost across the full training cycle.
+
+	\subsubsection{Why It Works in Practice}
+	The key effect is that the filterbank learns to stabilize around values that improve separability for the species subset currently being learned. When the dataset requires fine discrimination in low-frequency content, the learned transition tends to move toward values that preserve resolution in that region. When the relevant information is concentrated elsewhere, the transition shifts accordingly. In other words, the front-end learns where spectral detail is most useful for the task, without losing the inductive bias of triangular filters.
+
+	Empirically, this behavior appears as convergence of breakpoint and transition width to stable values that differ across species subsets. In representative runs initialized with a breakpoint around \(4\,\mathrm{kHz}\), the learned transition often moves toward lower values (approximately \(1.9\,\mathrm{kHz}\)), indicating stronger logarithmic emphasis in the low-frequency region where many discriminative bird cues are concentrated. The best-performing subset-level models show that this adaptive mechanism generally outperforms both fixed mel-style mappings and unconstrained fully learnable filter matrices in the same parameter range, indicating that structure plus limited adaptability is a strong trade-off.
+
 	\subsection{Model Architecture}
-	\section{Dataset and Data Engineering}
-	\subsection{Data Sources and API Querying}
-	\subsection{Preprocessing Pipeline}
-	\section{Experimental Setup}
-	\section{Codebase Refactoring for Clarity and Reusability}
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=0.98\textwidth]{images/model_architecture_blocks.png}
+		\caption{Readable block-level view of the proposed model architecture from waveform input to final classification.}
+		\label{fig:model_architecture_overview}
+	\end{figure}
 
-	\chapter{Experiments}
-	\section{Main Experiments}
-	\section{Extra Experiments}
-	\section{Ablation Studies}
+	\subsubsection{Waveform and Spectral Front-End}
+	A waveform is the discrete sequence of air-pressure samples recorded by the microphone. At \(32\)~kHz, a \(3\)-second clip contains \(96{,}000\) samples. This representation is precise in time but does not directly expose spectral structure, while bird calls are primarily discriminated by frequency trajectories, harmonic content, and temporal modulations. For this reason, the first stage of \emph{WrenNet} is a spectral front-end.
 
-	\chapter{Results and Discussion}
-	\section{Classification Results}
-	\section{Error Analysis}
-	\section{Accuracy-Efficiency Trade-Offs}
+	In implementation, the model first enforces a consistent input layout and then applies one of several spectrogram families. In the strongest configuration used in the experiments, the front-end is the semi-learnable combined log--linear module. The waveform is transformed by STFT with Hann windowing, producing complex coefficients over time-frequency bins. Magnitude is extracted and projected through a triangular filterbank with \(N\) filters, where the filter centers are generated by a differentiable mixture of logarithmic and linear spacing. If \(x_i\in[0,1]\) is the normalized filter index, the center frequency is
+	\begin{equation}
+		f_i = (1-S_i)\,f_{\log}(x_i) + S_i\,f_{\mathrm{lin}}(x_i),
+	\end{equation}
+	\begin{equation}
+		S_i = \sigma\!\left(\left(x_i-\hat{b}\right)w\right), \qquad \hat{b}=\frac{b-f_{\min}}{f_{\max}-f_{\min}},
+	\end{equation}
+	where \(b\) is the learnable breakpoint and \(w\) is the learnable transition width. The filtered spectrogram is then
+	\begin{equation}
+		Z_m(t)=\sum_k H_m(k;b,w)\,|X_t(k)|.
+	\end{equation}
 
-	\chapter{AudioMoth Integration}
-	\section{Firmware and Library Integration}
-	\section{On-Device Inference Pipeline}
+	After filtering, the model applies decibel conversion with bounded dynamic range and then per-clip normalization:
+	\begin{equation}
+		\tilde{Z}=\frac{Z_{\mathrm{dB}}-\mu}{\sigma+10^{-5}},
+	\end{equation}
+	with \(\mu\) and \(\sigma\) computed on the current sample. This normalization stabilizes optimization by reducing scale variability across recordings. The implementation also includes a frequency-axis alignment safeguard that resamples spectrogram channels to the expected number of front-end features when needed, so the downstream encoder receives a consistent tensor geometry.
 
-	\chapter{Device Tests and Benchmarking}
-	\section{Functional Tests on Device}
-	\section{Latency, Memory, and Power Benchmarks}
-	\section{Exported INT8 Inference Evaluation}
+	\subsubsection{Convolutional Backbone}
+	A Convolutional Neural Network learns local detectors that slide over the input and respond to recurring short patterns \cite{lecun1998cnn}. In bioacoustics, these patterns are not visual edges but spectral-time fragments such as onsets, narrow-band harmonics, chirp sweeps, and repeated modulation motifs. Weight sharing makes this mechanism efficient because the same detector can fire at any time location.
+
+	The encoder in this model follows a Matchbox-style 1D temporal design \cite{matchboxnet2020}, with low-power principles aligned with compact edge backbones \cite{phinets2022}. The core unit is a causal depthwise-separable convolutional block. Causality is implemented by left-only temporal padding \(P=d(k-1)\), where \(d\) is dilation and \(k\) is kernel size, so no future frame is used to compute the current output. This is relevant for streaming-oriented deployment and for preserving a strict temporal interpretation of features.
+
+	Inside each block, the transformation is organized as expansion \(1\times1\), depthwise temporal convolution, squeeze-and-excitation recalibration, and projection \(1\times1\). In compact notation, for channel \(c\),
+	\begin{equation}
+		u_c = k_c * x_c, \qquad
+		v_o = \sum_c p_{o,c}\,u_c,
+	\end{equation}
+	where \(k_c\) are depthwise temporal kernels and \(p_{o,c}\) are pointwise mixing coefficients. Channel recalibration is performed by a sigmoid gate computed from global pooled context:
+	\begin{equation}
+		s=\sigma\!\left(W_2\,\delta(W_1\,\mathrm{GAP}(u))\right), \qquad \hat{u}_c(t)=s_c\,u_c(t).
+	\end{equation}
+	This mechanism increases response for informative channels and suppresses less useful ones.
+
+	At network level, the instantiated MatchboxNetSkip path is composed of an initial block, three major temporal blocks, and two final blocks. Each major block contains two sub-blocks and residual pathways, with dilation patterns chosen to expand receptive field without temporal downsampling in the compact setting. The architecture therefore combines local precision and broader temporal context while preserving frame resolution for the recurrent stage.
+
+	\subsubsection{GRU: Temporal Memory Beyond Local Convolutions}
+	Convolutions extract strong local patterns, but bird vocalizations also require temporal memory across longer windows, especially when discriminative cues depend on rhythm, repetition spacing, or call evolution. The recurrent stage is a unidirectional GRU \cite{cho2014gru}. Given feature vector \(x_t\) and previous state \(h_{t-1}\), it computes
+	\begin{equation}
+		z_t=\sigma(W_z x_t + U_z h_{t-1} + b_z),
+	\end{equation}
+	\begin{equation}
+		r_t=\sigma(W_r x_t + U_r h_{t-1} + b_r),
+	\end{equation}
+	\begin{equation}
+		\tilde{h}_t=\tanh(W_h x_t + U_h(r_t \odot h_{t-1}) + b_h),
+	\end{equation}
+	\begin{equation}
+		h_t=(1-z_t)\odot h_{t-1} + z_t \odot \tilde{h}_t.
+	\end{equation}
+	The update gate \(z_t\) controls how much new evidence replaces memory, while \(r_t\) controls how strongly the past contributes to the candidate state. In the compact student configuration, the GRU receives \(32\)-dimensional frame features from the CNN and produces \(64\)-dimensional temporal states. A subsequent linear projection maintains the \(64\)-dimensional latent space and regularizes the transition toward attention pooling.
+
+	\subsubsection{Attention Pooling and Classifier}
+	After recurrent processing, the network has a sequence \(\{h_t\}_{t=1}^{T}\) of temporal states. Not every frame is equally informative, so the model applies learned temporal weighting. The implemented attention is deliberately lightweight: one linear scorer maps each \(h_t\in\mathrm{R}^{64}\) to a scalar logit, softmax normalizes these logits across time, and the context vector is formed by weighted summation:
+	\begin{equation}
+		e_t = w^\top h_t + b, \qquad
+		\alpha_t = \frac{\exp(e_t)}{\sum_{j=1}^{T}\exp(e_j)},
+	\end{equation}
+	\begin{equation}
+		c = \sum_{t=1}^{T}\alpha_t h_t.
+	\end{equation}
+	The classifier is a final linear layer:
+	\begin{equation}
+		o = W_c c + b_c, \qquad
+		p(c \mid x)=\frac{\exp(o_c)}{\sum_j \exp(o_j)}.
+	\end{equation}
+	In practical terms, this stage compresses a long temporal sequence into one discriminative embedding while preserving frame importance through \(\alpha_t\). It is one of the key reasons the architecture remains compact without discarding temporal selectivity.
+
+	\subsubsection{Layer-Wise Tensor Flow in WrenNet}
+	Let \(B\) be batch size, \(L\) waveform length, and \(C\) number of classes. For a \(3\)-second clip at \(32\)~kHz, \(L=96{,}000\). The forward path can be written as
+	\begin{equation}
+		x \in \mathrm{R}^{B\times L}
+		\rightarrow S \in \mathrm{R}^{B\times F\times T}
+		\rightarrow H \in \mathrm{R}^{B\times F_c\times T}
+		\rightarrow R \in \mathrm{R}^{B\times T\times H_d}
+		\rightarrow c \in \mathrm{R}^{B\times H_d}
+		\rightarrow o \in \mathrm{R}^{B\times C}.
+	\end{equation}
+	In the compact configuration, \(F=64\), \(F_c=32\), \(H_d=64\). The time length \(T\) is determined by STFT windowing and hop size. This decomposition clarifies that only the final classifier depends directly on \(C\), while front-end, CNN, recurrent, and attention layers remain class-agnostic and therefore reusable across class-set variants.
+
+	\subsubsection{Concrete Instantiation Used in the Main Experiments}
+	The concrete student used in the main distilled experiments is built around the combined log--linear front-end with trainable \(b\) and \(w\), \(64\) spectral filters, MatchboxNetSkip with \(32\) base channels, single-direction GRU with hidden size \(64\), scalar temporal attention, and linear classification head. This design keeps representational capacity where it most affects difficult bioacoustic boundaries, while avoiding heavy recurrent stacks or high-channel convolutional expansions.
+
+	Operationally, experiment families differ in STFT resolution according to target trade-offs. Subset-focused runs commonly use \(n_{\mathrm{fft}}=1024\), \(\mathrm{hop}=320\) to preserve fine spectral detail. In the main distillation protocol, a lighter setting with \(n_{\mathrm{fft}}=512\) and \(\mathrm{hop}=320\) is used together with 64 filters, initial breakpoint \(b_0=8000\)~Hz, and initial transition width \(w_0=200\). Across these settings, the compact architecture remains in the low-\(10^4\) parameter regime and, in representative runs, around \(5.3\times10^4\) parameters, with class count affecting mainly the last linear layer.
+
+	A central empirical observation is that the learnable front-end parameters converge to stable values during training and adapt with task conditions. For example, runs initialized around \(4\)~kHz show learned breakpoints moving to lower frequencies with moderate transition widths, indicating that the model concentrates spectral resolution where the current species subset is most discriminative. This is consistent with the central hypothesis that semi-learnable filtering improves the representation-quality to complexity ratio in edge-oriented bird classification.
+
+	\subsubsection{Parameter Choices and Scaling with Class Cardinality}
+	Parameter selection follows a strict efficiency-first criterion. The compact operating point uses \(F=64\) front-end filters, \(F_c=32\) convolutional channels after the Matchbox-style backbone, and \(H_d=64\) recurrent hidden units. These values are large enough to preserve discriminative temporal-spectral structure in difficult species groups, but small enough to keep memory pressure and inference cost compatible with on-device execution.
+
+	The main architectural scaling law is straightforward. If \(C\) is the number of classes, only the final classifier scales directly with \(C\), with
+	\begin{equation}
+		P_{\mathrm{cls}} = H_d \cdot C + C.
+	\end{equation}
+	All upstream blocks, including front-end, convolutional encoder, recurrent unit, and attention pooling, are class-agnostic and therefore reusable when the taxonomy changes.
+
+	This decomposition explains why the same model family can be instantiated across subsets with different cardinality. Moving from small subsets to larger class inventories increases output-layer parameters and confusion complexity, while preserving most of the internal representation pipeline. In the reported experiments, compact configurations remain around the mid-\(10^4\) to low-\(10^5\) parameter range depending on class count and width multipliers, and larger variants increase absolute accuracy at the expected cost of higher memory and energy demand. The selected compact configuration is therefore a deliberate compromise: it preserves separability on hard classes while remaining viable under embedded deployment constraints.
+
+	\subsubsection{Knowledge Distillation as an Architectural Training Strategy}
+	In this project, knowledge distillation is not used as a late-stage add-on, but as a primary training objective for the compact architecture described above. The idea is that a large teacher model provides soft class distributions that encode inter-class similarity and uncertainty structure, while ground-truth labels provide strict supervision on the target class. This combined signal is particularly valuable for bird bioacoustics, where many species are acoustically close and hard labels alone are often insufficient for stable separation \cite{hinton2015distilling,birdnet2021}.
+
+	The teacher used in the distillation pipeline is BirdNET, while the student is the compact \emph{WrenNet} architecture optimized for edge deployment. The implementation follows a two-stage process. First, the teacher processes the training audio to produce soft probability targets with confidence threshold \(0.05\). Second, the student is trained with both hard and soft supervision. The key point is architectural consistency: the deployed student network is unchanged at inference time; distillation only modifies training dynamics and therefore improves accuracy without increasing deployed model complexity.
+
+	The practical objective used in the project is
+	\begin{equation}
+		\mathcal{L}_{\mathrm{distill}} = \alpha\,\mathcal{L}_{\mathrm{hard}} + (1-\alpha)\,T^2\,\mathcal{L}_{\mathrm{soft}},
+	\end{equation}
+	with \(\alpha=0.4\) and \(T=3.0\) in the main distilled configuration. Here \(\mathcal{L}_{\mathrm{hard}}\) is standard cross-entropy on ground-truth labels, while \(\mathcal{L}_{\mathrm{soft}}\) is the KL-based soft-target term described in Section~3.5.
+
+	Implementing this pipeline required solving three concrete issues. The first was efficient integration of teacher inference over large training sets; this was addressed by decoupling soft-target generation from student optimization through an offline stage. The second was supervision balance; this was handled through explicit tuning of \(\alpha\), with adaptive adjustment rate \(0.1\) in the adaptive setup. The third was calibration of teacher confidence; temperature scaling with \(T=3.0\) was used to avoid over-peaked targets and provide smoother class-relation signals to the student.
+
+	This distillation design is directly connected to the choice of focal hard supervision discussed below. In practical terms, the training signal is split into two complementary roles: the hard branch must force corrections on difficult and under-represented cases, while the soft branch must transfer inter-class geometry learned by the teacher. The focal term addresses the first role by amplifying hard-example gradients, with \(\gamma=4.0\) in the main protocol and automatic class weighting to handle imbalance. The KL soft term addresses the second role by shaping the student's probability mass over confusable classes. Their combination is therefore coherent with the full architecture: front-end filtering and temporal modeling produce discriminative embeddings, and focal distillation determines how those embeddings are optimized under class imbalance and acoustic ambiguity.
+
+	The measured impact is significant in the distilled nine-class benchmark: the compact student reaches \(88.37\%\) test accuracy while preserving edge-oriented footprint. Gains are especially relevant on challenging species discrimination, with strong improvements in difficult classes such as \emph{Poecile montanus}, and with high recall for the negative ``no bird'' class. These results confirm the intended role of distillation in the proposed system: transfer large-model knowledge into a deployable architecture without sacrificing on-device efficiency.
+
+	\subsection{Training Objectives and Loss Functions}
+	\subsubsection{Cross-Entropy}
+	Cross-entropy is the standard loss for multi-class classification. For one sample with one-hot target \(y\) and predicted probabilities \(p\), it is
+	\begin{equation}
+		\mathcal{L}_{\mathrm{CE}} = -\sum_{c=1}^{C} y_c \log p_c.
+	\end{equation}
+	Because only the true class has \(y_c=1\), this reduces to \(-\log p_{y^\ast}\). Minimizing cross-entropy increases probability assigned to the correct class.
+
+	\subsubsection{Focal Loss}
+	Focal loss modifies cross-entropy to focus learning on hard examples \cite{lin2017focal}:
+	\begin{equation}
+		\mathcal{L}_{\mathrm{focal}} = -\alpha_{y^\ast}(1-p_{y^\ast})^\gamma \log p_{y^\ast}.
+	\end{equation}
+	Equivalently, with \(p_t\) denoting the model probability assigned to the true class, one writes
+	\begin{equation}
+		\mathcal{L}_{\mathrm{focal}} = -\alpha_t(1-p_t)^\gamma \log p_t.
+	\end{equation}
+	The modulating factor \((1-p_t)^\gamma\) is close to zero for easy, high-confidence samples and close to one for difficult, low-confidence samples. As a result, easy examples contribute much less to gradient updates, while hard examples remain influential for longer during training. The class-dependent weight \(\alpha_t\) addresses class-frequency imbalance by scaling minority-class contributions upward and majority-class contributions downward.
+
+	In this application context, focal loss is not an isolated mathematical variant. It is aligned with the data reality of bird-sound classification, where difficulty is heterogeneous across species, recordings include strong background variability, and the negative class must be separated from many non-bird acoustic patterns. Under these conditions, plain cross-entropy tends to be dominated by abundant easy examples, whereas focal loss preserves gradient pressure on ambiguous species boundaries and low-SNR segments that are critical for field performance.
+	In the main training protocol, focal loss is instantiated with \(\gamma=4.0\) and automatic class weighting, so hard and minority cases maintain non-negligible gradient contribution even when easy examples dominate the batch.
+
+	\subsubsection{Distillation Loss}
+	Knowledge distillation transfers information from a stronger teacher model to a compact student \cite{hinton2015distilling}. The student is trained with two targets: hard labels from the dataset and soft targets from the teacher. Let \(z_s\) and \(z_t\) be student and teacher logits. With temperature \(T\), define
+	\begin{equation}
+		q_s^{(T)}(c)=\frac{\exp(z_{s,c}/T)}{\sum_j \exp(z_{s,j}/T)}, \qquad
+		q_t^{(T)}(c)=\frac{\exp(z_{t,c}/T)}{\sum_j \exp(z_{t,j}/T)}.
+	\end{equation}
+	The soft term uses temperature-scaled KL divergence:
+	\begin{equation}
+		\mathcal{L}_{\mathrm{KD}} = T^2 \sum_{c=1}^{C} q_t^{(T)}(c)\log \frac{q_t^{(T)}(c)}{q_s^{(T)}(c)}.
+	\end{equation}
+	The total distillation objective is
+	\begin{equation}
+		\mathcal{L}_{\mathrm{distill}} = (1-\lambda)\mathcal{L}_{\mathrm{CE}} + \lambda \mathcal{L}_{\mathrm{KD}}.
+	\end{equation}
+	In this expression, the first term is often called the \emph{hard CE term}, and the second term is the \emph{temperature-scaled KL term}. Hard CE enforces fidelity to ground-truth labels. The KL term transfers teacher uncertainty structure, which contains information about class similarities.
+
+	For consistency with the main distilled configuration discussed in the architecture section, this objective can also be written as \(\mathcal{L}_{\mathrm{distill}}=\alpha\mathcal{L}_{\mathrm{hard}}+(1-\alpha)T^2\mathcal{L}_{\mathrm{soft}}\), with \(\alpha=0.4\) and \(T=3.0\). This parameterization emphasizes soft teacher guidance while retaining hard-label anchoring.
+
+	\subsubsection{Focal Distillation}
+	Focal distillation replaces the hard CE term with focal loss:
+	\begin{equation}
+		\mathcal{L}_{\mathrm{focal\_distill}} = (1-\lambda)\mathcal{L}_{\mathrm{focal}} + \lambda \mathcal{L}_{\mathrm{KD}}.
+	\end{equation}
+	In expanded form, the hard branch is
+	\begin{equation}
+		\mathcal{L}_{\mathrm{focal\_hard}} = -\alpha_t(1-p_t)^\gamma \log p_t,
+	\end{equation}
+	and the soft branch is
+	\begin{equation}
+		\mathcal{L}_{\mathrm{KL\_soft}} = T^2\sum_{c=1}^{C} q_t^{(T)}(c)\log\frac{q_t^{(T)}(c)}{q_s^{(T)}(c)}.
+	\end{equation}
+	The complete objective can therefore be read as
+	\begin{equation}
+		\mathcal{L}_{\mathrm{focal\_distill}} = (1-\lambda)\mathcal{L}_{\mathrm{focal\_hard}} + \lambda\mathcal{L}_{\mathrm{KL\_soft}}.
+	\end{equation}
+	This objective is particularly suitable when class imbalance and class difficulty coexist. The focal hard term preserves learning pressure on hard or minority examples; the KL soft term injects teacher-level structure over confusable classes. In relation to the rest of the pipeline, focal distillation is the optimization layer that operationalizes all earlier design choices: species-focused dataset construction, realistic augmentation, semi-learnable spectral emphasis, and compact temporal modeling. The empirical effect is coherent with this role, with stronger robustness on difficult species and stable high recall for the no-bird class while maintaining edge-compatible model size.
+
+	\subsection{Interpretation of the Semi-Learnable Front-End Behavior}
+	A central observation across runs is that the learned front-end parameters do not drift randomly. They converge to stable regions that depend on the class subset and acoustic difficulty. This supports the intended role of the semi-learnable filterbank: preserve a strong spectral prior while still adapting frequency allocation to the discriminative needs of the current task.
+
+	In practical terms, the learned breakpoint can move away from initialization toward lower-frequency emphasis when this improves class separation for the active species set. This behavior is consistent with the acoustic structure of many bird calls, where relevant cues often concentrate in specific frequency bands rather than being uniformly distributed over the entire spectrum. The transition-width parameter complements this mechanism by controlling how sharp or smooth the log-linear change is. Together, these two parameters provide controlled flexibility with negligible model-size overhead.
+
+	To make this interpretation auditable, Figure~\ref{fig:learned_frequency_mappings_16khz} provides a static reconstruction of the interactive ``Learned Frequency Mappings'' report. The plot compares reference mappings and learned mappings derived from the recorded \((b,w)\) values of representative runs.
+
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=0.96\textwidth]{images/learned_frequency_mappings_16khz.png}
+		\caption{Reconstructed learned frequency mappings from run-level breakpoint and transition-width values (\(0\)--\(16\) kHz). Curves are generated from the same adaptive mapping equations used in the interactive HTML report.}
+		\label{fig:learned_frequency_mappings_16khz}
+	\end{figure}
+
+	The figure supports three consistent observations. First, the easy subset (\(b\approx 1.5\), \(w\approx 6\)) remains close to a linear mapping across most of the band. Second, the hard subset (\(b\approx 1224\), \(w\approx 27.4\)) preserves stronger low-frequency emphasis before transitioning toward linear behavior. Third, monoclass runs shift the operating point according to species-specific cues, with \emph{Corvus corax} and \emph{Upupa epops} converging to markedly different breakpoints.
+
+	\subsection{Implementation Quality and Reproducibility}
+	The implementation was structured to separate data processing, model definition, loss construction, and experiment orchestration. This modular design supports reproducibility because each experimental run can be traced back to explicit hyperparameters, data configuration, and final metrics. It also supports extension: new front-ends, alternative losses, or additional species subsets can be introduced without rewriting the full training pipeline. This is essential because the project is not a single experiment but a reusable research framework for low-power bioacoustic classification.
+
+	From a systems viewpoint, training throughput is maintained through a resource-aware loading strategy. Small datasets can be preloaded to minimize latency, whereas larger corpora are processed on demand to bound memory footprint. Parallel data workers and pinned host memory are used in accelerator-based training to reduce pipeline stalls between input preparation and model execution.
+
+	Memory stability is reinforced by controlling intermediate allocations in augmentation and feature extraction, and by reusing precomputed artifacts when available. In particular, pooled metadata for empty segments and optional caching of frequently accessed preprocessed inputs reduce repeated signal-processing overhead across epochs without weakening split isolation.
+
+	Experiment management is configuration-driven, with hierarchical settings that define defaults and controlled overrides for sampling ratios, augmentation behavior, front-end parameters, loss weighting, and optimization policies. This structure enables strict reproducibility and consistent run-to-run comparison because each run corresponds to an explicit, versioned parameter state rather than ad hoc script modifications.
+
+	\subsection{Experimental Setup}
+	\subsubsection{Experimental Protocol}
+	This section documents how experiments are executed and compared. The objective is methodological transparency: each result in the following results subsections must be traceable to a clear training, validation, and test procedure.
+
+	All experiments use the same data-governance principles described earlier in this chapter: fixed split policy, leakage control between training and evaluation, and deterministic seeds for reproducible partitioning. The acquisition and preprocessing chain starts from 150,645 downloaded recordings and produces 150,557 validated clips of 3 seconds at 32~kHz, with identical segmentation policy across training, validation, and test.
+
+	The core distillation protocol uses BirdNET soft targets extracted with confidence threshold \(0.05\). The student receives hard labels and soft labels jointly through focal distillation, with \(\alpha=0.4\), \(T=3.0\), and focal parameter \(\gamma=4.0\). Automatic class weighting is enabled for imbalance management, and adaptive distillation uses adaptation rate \(0.1\) to update soft-supervision strength when validation dynamics plateau.
+
+	Optimization is based on AdamW with learning rate \(10^{-3}\), weight decay \(0.01\), batch size \(64\), and cosine annealing over \(150\) epochs. Early stopping uses patience \(35\). Filter adaptation receives dedicated learning-rate amplification, with multiplier \(15\times\) for breakpoint updates and \(5\times\) for transition-width updates. The alternating strategy applies \(5\) initial epochs of joint optimization, then cycles of \(5\) epochs focused on main-network updates and \(1\) epoch focused on filter updates, and closes with \(20\) final joint-refinement epochs.
+
+	Model selection is performed on validation metrics, while final reporting is reserved for the held-out test split. Reported classification metrics include test accuracy and weighted \(F1\), together with class-aware interpretation in the discussion chapter. For teacher--student fairness analysis, direct Student/BirdNET comparisons are reported on the shared species classes, excluding the explicit ``no bird'' class that is unique to the student formulation.
+
+	\subsubsection{Experiments}
+	The main experimental campaign is structured around a small set of directly comparable scenarios. The first scenario evaluates front-end design on controlled subsets, including semi-learnable and fully learnable variants under matched conditions. The second scenario evaluates the compact architecture on easy and hard subsets to expose sensitivity to class confusability. The third scenario scales the task to the full species pool, including comparison between compact and larger architectures. The fourth scenario evaluates deployment behavior on edge-relevant hardware for the same model family.
+
+	These scenarios correspond exactly to the results discussed below in this chapter. No additional experimental families are required for methodological coherence: the core contribution is already supported by front-end comparison, subset-difficulty analysis, full-scale classification evaluation, and device-level efficiency measurements.
+
+	\subsection{Results}
+	\subsubsection{Classification Results}
+	The classification results confirm that the semi-learnable front-end provides the strongest accuracy-efficiency balance in the tested setup. On the \(8(+1)\) controlled subset, the semi-learnable variant outperforms the fully learnable alternative while remaining lighter in effective complexity. The easy subset yields the highest scores, while the hard subset produces a substantial drop, confirming that inter-species acoustic similarity remains the dominant challenge.
+
+	\begin{table}[t]
+		\centering
+		\small
+		\caption{Representative classification results across configurations.}
+		\label{tab:extended_results}
+		\begin{tabular}{|l|c|c|c|c|}
+			\hline
+			Configuration & Classes & Parameters & Test Acc (\%) & Test \(F1_w\) (\%) \\
+			\hline
+			Semi-learnable subset & 8(+1) & 64,540 & 87.22 & 87.25 \\
+			Fully learnable subset & 8(+1) & 70,442 & 83.83 & 83.84 \\
+			Easy species subset & 8(+1) & 57,546 & 90.76 & 90.90 \\
+			Hard species subset & 13(+1) & 57,546 & 77.47 & 77.97 \\
+			Full dataset compact model & 70(+1) & 57,546 & 66.41 & 67.49 \\
+			Full dataset larger model & 70(+1) & 136,906 & 70.13 & 70.81 \\
+			\hline
+		\end{tabular}
+	\end{table}
+
+	\begin{table}[t]
+		\centering
+		\small
+		\caption{Filterbank-level comparison on the controlled \(8(+1)\) setup (64 filters).}
+		\label{tab:filterbank_comparison}
+		\begin{tabular}{|l|l|c|c|}
+			\hline
+			Filterbank Type & Learning Mode & Best Val Acc (\%) & Test Acc (\%) \\
+			\hline
+			Mel & Fixed & 82.49 & 79.61 \\
+			Linear triangular & Fixed & 82.10 & 81.45 \\
+			Combined log--linear & Semi-learnable & 85.74 & 87.22 \\
+			Fully learnable & Fully learnable & 84.26 & 83.83 \\
+			\hline
+		\end{tabular}
+	\end{table}
+
+	\begin{table}[p]
+		\centering
+		\scriptsize
+		\caption{Adapted experimental summary for the full project.}
+		\label{tab:full_experiment_summary}
+		\resizebox{\textwidth}{!}{%
+		\begin{tabular}{|l|c|c|c|c|c|c|c|c|c|c|c|c|c|c|}
+			\hline
+			Experiment & Classes & Params & Epochs & Val Acc & Test Acc & F1$_w$ & Prec$_w$ & Rec$_w$ & Breakpoint & Trans. Width & Student Acc & BirdNET Acc & Student F1$_m$ & BirdNET F1$_m$ \\
+			\hline
+			Semi-learnable (subset baseline) & 8(+1) & 57k & 75 & 85.74 & 87.22 & 87.25 & 87.69 & 87.22 & 2741 & 67.79 & 86.33 & 88.19 & 85.76 & 86.93 \\
+			\hline
+			Fully learnable (subset) & 8(+1) & 70k & 75 & 84.53 & 83.82 & 83.84 & 84.77 & 83.27 & -- & -- & -- & -- & -- & -- \\
+			\hline
+			Full dataset (semi-learnable) & 70(+1) & 57k & 150 & 70.10 & 66.51 & 67.49 & 71.81 & 66.41 & 851 & 19.00 & -- & -- & -- & -- \\
+			\hline
+			Full dataset (larger model) & 70(+1) & 136k & 75 & 72.10 & 70.14 & 70.81 & 73.08 & 70.12 & 1390 & 33.86 & -- & -- & -- & -- \\
+			\hline
+			Easy species subset & 8(+1) & 57k & 116 & 91.98 & 90.76 & 90.90 & 91.43 & 90.76 & 1.50 & 6.00 & 89.85 & 91.04 & 78.75 & 87.50 \\
+			\hline
+			Hard species subset & 13(+1) & 57k & 134 & 79.78 & 77.47 & 77.97 & 79.66 & 77.47 & 1224 & 27.42 & 73.90 & 82.86 & 68.00 & 79.30 \\
+			\hline
+			Monoclass (\emph{Corvus corax}) & 1(+1) & 57k & 94 & 96.94 & 92.37 & 92.62 & 93.89 & 92.37 & 1955 & 51.79 & 90.15 & 91.16 & 87.96 & 89.72 \\
+			\hline
+			Monoclass (\emph{Upupa epops}) & 1(+1) & 57k & 45 & 98.68 & 94.71 & 94.67 & 95.17 & 94.71 & 5269 & 132.00 & 86.35 & 89.45 & 85.52 & 88.97 \\
+			\hline
+			Hard couple (\emph{Regulus} pair) & 2(+1) & 57k & 85 & 87.20 & 85.64 & 85.60 & 86.06 & 85.64 & 1221 & 28.34 & 83.60 & 87.87 & 83.41 & 87.59 \\
+			\hline
+			High-frequency subset & 5(+1) & 57k & 93 & 90.27 & 91.49 & 91.55 & 91.85 & 91.49 & 164 & 8.55 & 90.23 & 92.74 & 90.37 & 91.25 \\
+			\hline
+			Low-frequency subset & 4(+1) & 57k & 126 & 90.28 & 91.63 & 91.67 & 91.83 & 91.63 & 237 & 9.00 & 85.15 & 91.01 & 85.72 & 89.44 \\
+			\hline
+		\end{tabular}%
+		}
+	\end{table}
+
+	\paragraph{Direct Semi-Learnable vs Fully Learnable Comparison}
+	To isolate the effect of front-end parameterization, an additional controlled comparison was performed on the same \(8(+1)\) setup with identical backbone and training pipeline, changing only the filter-bank management strategy.
+
+	\begin{table}[t]
+		\centering
+		\small
+		\caption{Model-complexity comparison for the direct front-end test.}
+		\label{tab:semi_vs_fully_complexity}
+		\begin{tabular}{|l|c|c|}
+			\hline
+			Approach & Learnable Filter Parameters & Total Parameters \\
+			\hline
+			Semi-learnable (combined log--linear) & 2 (\(b, w\)) & \(\sim 53{,}000\) \\
+			Fully learnable filter bank & \(32{,}832\) (\(64\times 513\)) & \(\sim 85{,}000\) \\
+			\hline
+		\end{tabular}
+	\end{table}
+
+	\begin{table}[t]
+		\centering
+		\small
+		\caption{Performance comparison in the direct front-end test.}
+		\label{tab:semi_vs_fully_metrics}
+		\begin{tabular}{|l|c|c|c|}
+			\hline
+			Metric & Semi-learnable (\%) & Fully learnable (\%) & Difference (\%) \\
+			\hline
+			Validation Accuracy & \textbf{85.74} & 76.15 & \(-9.59\) \\
+			Test Accuracy & \textbf{87.22} & 79.93 & \(-7.29\) \\
+			Weighted \(F1\) & \textbf{87.26} & 79.92 & \(-7.34\) \\
+			Weighted Precision & \textbf{87.69} & 81.57 & \(-6.12\) \\
+			\hline
+		\end{tabular}
+	\end{table}
+
+	This comparison indicates that a much larger unconstrained front-end does not automatically improve recognition quality in this task. Despite the larger parameter budget, the fully learnable variant underperforms the semi-learnable design across all key metrics. The result supports the role of inductive bias: the combined log--linear structure provides a better prior for bird audio while still allowing targeted adaptation through breakpoint and transition-width learning.
+
+	At the time of writing, this fully learnable comparison was trained with a reduced epoch budget due to computational-time constraints. A matched long-run training is ongoing, but in the current results the semi-learnable front-end is the strongest accuracy/complexity trade-off.
+
+	To complement aggregate metrics, row-normalized confusion matrices are reported for the controlled \(8(+1)\) setting, the difficult \(13(+1)\) subset, and the full \(70(+1)\) setting. For the full setting, a genus-level aggregation is used instead of a dense \(71\times71\) matrix to keep the error structure interpretable.
+
+	\begin{figure}[p]
+		\centering
+		\includegraphics[width=0.90\textwidth]{images/confmat_8plus1_fully_rownorm.png}
+		\caption{Row-normalized confusion matrix (\%) for the controlled \(8(+1)\) fully learnable configuration.}
+		\label{fig:confmat_8plus1_fully}
+	\end{figure}
+
+	\begin{figure}[p]
+		\centering
+		\includegraphics[width=0.93\textwidth]{images/confmat_13plus1_hard_rownorm.png}
+		\caption{Row-normalized confusion matrix (\%) for the \(13(+1)\) hard-species subset.}
+		\label{fig:confmat_13plus1_hard}
+	\end{figure}
+
+	\begin{figure}[p]
+		\centering
+		\includegraphics[width=0.94\textwidth]{images/confmat_70plus1_genus_aggregated_rownorm.png}
+		\caption{Genus-level aggregated row-normalized confusion matrix (\%) for the \(70(+1)\) full-dataset setting (top-18 genera by support, plus ``Other genera'' and ``no bird'').}
+		\label{fig:confmat_70plus1_genus}
+	\end{figure}
+
+	\input{tables/top10_confusion_pairs.tex}
+
+	The \(8(+1)\) matrix confirms that errors are not uniformly distributed: the strongest directional confusion is \emph{Lophophanes cristatus} \(\rightarrow\) \emph{Bubo bubo} (about \(9\%\) of \emph{Lophophanes} samples), followed by \emph{Certhia brachydactyla} \(\rightarrow\) \emph{Emberiza cia} (about \(8.6\%\)). In the \(13(+1)\) hard subset, the dominant errors concentrate on expected difficult pairs, especially \emph{Parus major} \(\leftrightarrow\) \emph{Periparus ater} and \emph{Regulus ignicapilla} \(\leftrightarrow\) \emph{Regulus regulus}, with reciprocal confusion around \(6\%\) to \(8\%\).
+
+	At full scale, genus aggregation makes long-tail behavior interpretable: part of the error mass is absorbed by the ``Other genera'' bucket, while within the top genera the most recurrent cross-genus spillovers involve \emph{Periparus} \(\rightarrow\) \emph{Poecile}, \emph{Parus} \(\rightarrow\) \emph{Poecile}, and \emph{Parus} \(\rightarrow\) \emph{Cyanistes}. The top-10 pair table also quantifies how confusion changes from semi-learnable to fully learnable on the controlled subset: some pairs improve (for example \emph{Lophophanes cristatus} \(\leftrightarrow\) \emph{Certhia brachydactyla}), while others become substantially worse (for example \emph{Bubo bubo} \(\leftrightarrow\) \emph{Lophophanes cristatus}).
+
+	The filterbank comparison clarifies why the combined log--linear solution is preferred to a fully learnable front-end. Across both the standard comparison and the reduced-epoch direct test (Tables~\ref{tab:filterbank_comparison}, \ref{tab:semi_vs_fully_complexity}, and \ref{tab:semi_vs_fully_metrics}), the semi-learnable version remains consistently stronger while preserving a more compact and structured parameterization. Fully learnable filters expose a larger unconstrained search space and require substantially higher optimization effort for front-end coefficients, increasing computational cost and overfitting risk without clear gains in the present setup. The combined log--linear formulation instead keeps strong spectral priors, learns only the most relevant global adaptations, and therefore delivers a better accuracy/complexity trade-off.
+
+	Beyond aggregate tables, detailed subset analysis reinforces the same conclusion. In monoclass settings, the model reaches \(92.37\%\) on \emph{Corvus corax} and \(94.71\%\) on \emph{Upupa epops}, with markedly different learned breakpoints (\(\sim 1955\)~Hz and \(\sim 5269\)~Hz), indicating species-dependent spectral allocation. On the hard two-species \emph{Regulus} pair, performance remains \(85.64\%\), showing that the architecture can preserve discriminative power even for acoustically similar classes when supervision is focused.
+
+	Frequency-focused subsets show a consistent pattern. The high-frequency subset reaches \(91.49\%\) with learned breakpoint around \(164\)~Hz, while the low-frequency subset reaches \(91.63\%\) with breakpoint around \(237\)~Hz. In both cases, the mapping approaches near-linear behavior over most of the operative band, which supports the interpretation that the front-end is not converging to one fixed prior but is adapting to the dominant spectral demands of the active class set.
+
+	At full scale, the compact model reaches \(66.51\%\) with approximately \(57\)k parameters, while a larger \(136\)k-parameter variant reaches \(70.14\%\). The absolute gain is \(3.6\) percentage points, but with substantially higher model capacity. This confirms a central result: larger capacity improves full-task accuracy, yet compact semi-learnable designs still retain a favorable operating point when constrained deployment remains a primary objective.
+
+	At full scale, the compact model remains competitive while preserving deployment constraints, whereas the larger model recovers additional accuracy at significantly higher complexity. This confirms the expected trade-off: as class count and inter-class overlap grow, absolute performance improves with capacity, but deployment cost becomes harder to sustain on low-power devices.
+	\subsubsection{Subset-Level Species Analysis}
+	To complement aggregate metrics, species-level recall analysis was organized by subset difficulty. This view highlights where performance drops are concentrated and which acoustic relations dominate the remaining errors.
+
+	\begin{table}[p]
+		\centering
+		\scriptsize
+		\caption{Analysis of difficult species evaluated as single-class focused cases.}
+		\label{tab:difficult_species_single}
+		\begin{tabular}{|p{3.3cm}|c|p{2.9cm}|p{6.2cm}|}
+			\hline
+			Species & Recall (\%) & Verdict & Main Cause of Error \\
+			\hline
+			\emph{Upupa epops} (Hoopoe) & 63.5 & Very Difficult & Confused with monotonous calls (for example \emph{Aegolius funereus}) and environmental sounds; low recall overall. \\
+			\hline
+			\emph{Turdus philomelos} (Song Thrush) & 65.2 & Decidedly Difficult & Confused with other thrushes, especially \emph{Turdus merula}; mimic behavior increases ambiguity. \\
+			\hline
+			\emph{Lophophanes cristatus} (Crested Tit) & 65.6 & Decidedly Difficult & Confused with other tits and small passerines (\emph{Regulus regulus}, \emph{Aegithalos caudatus}). \\
+			\hline
+			\emph{Aegolius funereus} (Boreal Owl) & 74.6 & Medium-Difficult & Confused with nocturnal raptors, especially \emph{Strix aluco}. \\
+			\hline
+		\end{tabular}
+	\end{table}
+
+	\begin{table}[p]
+		\centering
+		\scriptsize
+		\caption{Analysis of difficult species pairs and genus-level confusion patterns.}
+		\label{tab:difficult_species_pairs}
+		\begin{tabular}{|p{3.3cm}|c|p{2.9cm}|p{6.2cm}|}
+			\hline
+			Pair or Species & Recall (\%) & Pair Verdict & Details on Confusion \\
+			\hline
+			\emph{Parus} / \emph{Periparus} & -- & Both Very Difficult & Strong mutual confusion and spillover confusion with multiple additional species. \\
+			\hline
+			\emph{Parus major} (Great Tit) & 62.6 & -- & Mistaken for \emph{Periparus ater} (46 times) and \emph{Fringilla coelebs} (49 times). \\
+			\hline
+			\emph{Periparus ater} (Coal Tit) & 66.3 & -- & Mistaken for \emph{Parus major} (18 times). \\
+			\hline
+			\emph{Turdus} genus & -- & Genus Problem & Strong cross-confusion among thrush species. \\
+			\hline
+			\emph{Turdus merula} (Blackbird) & 68.8 & -- & Confused with \emph{Turdus philomelos} (21 times) and \emph{Turdus pilaris} (37 times). \\
+			\hline
+			\emph{Turdus viscivorus} (Mistle Thrush) & 72.4 & -- & Similar intra-genus confusion pattern. \\
+			\hline
+			\emph{Regulus} genus & -- & Mutual Confusion & Main source of error is reciprocal confusion between the two \emph{Regulus} species. \\
+			\hline
+			\emph{Regulus ignicapilla} (Firecrest) & 72.5 & -- & Mistaken for \emph{Regulus regulus} in approximately 13\% of cases. \\
+			\hline
+			\emph{Regulus regulus} (Goldcrest) & 74.0 & -- & Mistaken for \emph{Regulus ignicapilla} in approximately 6.7\% of cases. \\
+			\hline
+			\emph{Certhia} genus & -- & \emph{C. familiaris} Hardest & Asymmetric confusion between the two treecreeper species. \\
+			\hline
+			\emph{Certhia brachydactyla} (Short-toed Treecreeper) & 79.0 & -- & Mostly confused with \emph{Certhia familiaris}. \\
+			\hline
+			\emph{Certhia familiaris} (Eurasian Treecreeper) & 71.7 & -- & Lower recall and confusion with a wider set of species. \\
+			\hline
+		\end{tabular}
+	\end{table}
+
+	\begin{table}[p]
+		\centering
+		\scriptsize
+		\caption{Analysis of species in the easy subset.}
+		\label{tab:easy_species_analysis}
+		\begin{tabular}{|p{3.3cm}|c|p{2.9cm}|p{6.2cm}|}
+			\hline
+			Species & Recall (\%) & Verdict & Why It Is Easy \\
+			\hline
+			non-bird & 91.9 & Very Easy & Easy to detect the absence of bird vocalizations. \\
+			\hline
+			\emph{Corvus corax} (Common Raven) & 88.5 & Very Easy & Distinct low-frequency vocal profile. \\
+			\hline
+			\emph{Falco tinnunculus} (Kestrel) & 86.5 & Very Easy & Sharp repetitive call pattern. \\
+			\hline
+			\emph{Otus scops} (Scops Owl) & 86.4 & Very Easy & Simple rhythmic whistle with high regularity. \\
+			\hline
+			\emph{Hirundo rustica} (Barn Swallow) & 86.1 & Easy & Fast chirping pattern with recognizable temporal structure. \\
+			\hline
+			\emph{Phylloscopus collybita} (Chiffchaff) & 85.1 & Easy & Characteristic repetitive ``chip-chop'' motif. \\
+			\hline
+			\emph{Ardea cinerea} (Grey Heron) & 84.0 & Easy & Harsh croaking call with clear spectral profile. \\
+			\hline
+			\emph{Picus canus} (Grey-headed Woodpecker) & 84.0 & Easy & Loud structured calls with stable acoustic signature. \\
+			\hline
+			\emph{Strix aluco} (Tawny Owl) & 82.7 & Easy & Iconic hoot pattern, acoustically distinct. \\
+			\hline
+		\end{tabular}
+	\end{table}
+
+	The three tables make the subset effect explicit: easy species are characterized by stable and distinctive signatures, while difficult subsets are dominated by taxonomic proximity and overlapping temporal-spectral patterns. This confirms that most residual errors are structured confusions rather than random failures and supports the use of subset-aware analysis for model interpretation.
+	\subsubsection{Error Analysis}
+	Error patterns are not uniformly distributed across classes. The highest confusion appears in taxonomically or acoustically similar groups, especially in subsets explicitly designed as difficult. This is coherent with the front-end and architecture analysis: the model learns useful discriminative structure, but near-overlapping vocal signatures remain the hardest regime.
+
+	The ``no bird'' class plays a central role in practical operation. False positives in this class directly affect field usability by increasing unnecessary storage and manual review. The negative-class construction strategy described earlier reduces this risk by combining environmental negatives and in-domain empty segments, but residual errors remain expected under very low-SNR or strongly overlapping soundscapes.
+	\subsubsection{Accuracy-Efficiency Trade-Offs}
+	Deployment-level comparison confirms that efficiency must be evaluated jointly with recognition metrics. The compact student configuration yields a much stronger practical profile than heavy baselines when measured on edge-relevant hardware and fixed 3-second inference windows. In this setting, the key quantity is not only absolute classification quality, but the energy required to obtain each prediction under realistic firmware constraints.
+
+	The detailed benchmarking protocol, raw electrical measurements, and instrumentation figures are reported in Section~\ref{sec:device_benchmarks}. In summary, relative to Raspberry Pi 3B+ student TFLite inference (\(0.1720\)~J per window), the AudioMoth deployment (\(0.0771\)~J) reduces energy per inference by about \(55\%\). Relative to the Raspberry Pi student STFT baseline (\(1.6500\)~J) and the BirdNET baseline (\(2.7900\)~J), the reductions are about \(95.3\%\) and \(97.2\%\), respectively.
+
+\subsection{AudioMoth Deployment}
+\subsubsection{Firmware and Library Integration}
+	The hardware deployment stage is built around the AudioMoth platform, selected for its low-power profile and field suitability in long-duration passive acoustic monitoring. From an integration perspective, the firmware layer must guarantee deterministic audio acquisition, stable buffering, and reproducible inference timing under constrained compute and memory budgets.
+
+	The deployment workflow is organized as a two-stage model path. A backbone network transforms fixed-size spectral input into compact temporal features, and a streaming recurrent stage consumes these features together with hidden state to produce class logits at each step. To make this executable on microcontroller hardware, the model conversion chain applies post-training integer quantization and exports compact operators and weights for embedded inference.
+
+	At system level, integration is designed around explicit memory partitioning. The firmware reserves a dedicated tensor arena in external SRAM and splits it between backbone and streaming stages, while keeping internal RAM for control flow and buffering. This separation is fundamental because it prevents contention between runtime bookkeeping and tensor buffers, which would otherwise destabilize long unattended recordings.
+
+	A second design decision is functional simplification of the base firmware to recover resources for inference. Non-essential modules for the benchmarked inference mode are disabled to reclaim Flash and RAM budget, and the runtime path focuses on deterministic inference execution and watchdog-safe operation. In practical terms, this means that the deployment target is not treated as a generic recording firmware with optional AI add-on, but as an inference-oriented firmware profile explicitly engineered for embedded classification.
+
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=0.78\textwidth]{images/audiomoth_top.png}
+		\vspace{0.6em}
+		\includegraphics[width=0.78\textwidth]{images/audiomoth_down.png}
+		\caption{AudioMoth hardware used for on-device deployment tests. Top image: top view. Bottom image: bottom view.}
+		\label{fig:audiomoth_hardware_views}
+	\end{figure}
+
+	The two views in Figure~\ref{fig:audiomoth_hardware_views} make explicit the physical constraints under which the deployed pipeline operates. These constraints are directly relevant to algorithm design because model footprint, buffering policy, and runtime scheduling must remain compatible with microcontroller-class resources.
+\subsubsection{On-Device Inference Pipeline}
+	The on-device inference pipeline processes fixed windows of audio and produces class probabilities for the monitored species set plus the explicit no-bird class. Execution follows a deterministic sequence: acquisition buffer fill, backbone inference, recurrent streaming update with hidden-state carry-over, posterior normalization, thresholding, and decision emission with a bounded number of events per unit time.
+
+	The most relevant implementation detail is state continuity. The recurrent hidden state is reset only at session boundaries and is propagated between consecutive windows during normal operation. This allows temporal accumulation of evidence while keeping per-window computation bounded. In bird bioacoustics, where vocal signatures often depend on short temporal motifs rather than isolated frames, this continuity is critical for stable on-device classification.
+
+	From a numerical perspective, the deployed pipeline preserves the training design logic. Quantized tensors are dequantized only where required by operator composition, and probabilities are computed from stabilized logits before confidence filtering. This ensures that deployment behavior remains consistent with offline validation while respecting integer-oriented execution constraints.
+
+	Operational robustness is enforced by watchdog-aware scheduling and explicit failure checks at each stage of interpreter and bridge initialization. If a sub-stage fails, the system remains in a controlled state instead of entering undefined execution. This is essential for remote deployments, where a silent failure can invalidate long monitoring campaigns.
+
+\subsection{Device Tests and Benchmarking}
+\subsubsection{Functional Tests on Device}
+	Functional validation was performed as a hardware-in-the-loop protocol on the target microcontroller. The test sequence includes firmware flashing, controlled reset, breakpoint-assisted verification of initialization phases, and runtime checks on inference completion and benchmark status variables. This protocol is designed to validate not only numerical output availability but also correct execution order of the full pipeline.
+
+	The expected execution trace follows a strict progression: firmware start, neural subsystem initialization, model-bridge construction, backbone invocation, recurrent-stage invocation, and completion signaling. Monitoring these transitions confirms that the deployed graph is actually executed on-device rather than bypassed by placeholder paths. This distinction is critical in embedded ML, where partial integrations can compile correctly but fail to execute full inference.
+
+	Validation also includes stress-oriented repeated inference loops with watchdog feeding enabled. The objective is to ensure that sustained inference does not trigger hard faults, memory corruption, or deadlocks under realistic runtime pressure. The resulting behavior indicates stable operation for repeated inference cycles in the tested setup.
+\subsubsection{Latency, Memory, and Power Benchmarks}
+\label{sec:device_benchmarks}
+	Latency benchmarking is performed with repeated fixed-input inference loops and explicit timing capture of aggregate and per-inference duration. A batch-based strategy is used to reduce measurement noise: total runtime over \(N\) inferences is measured and then normalized to average inference time. This method is more reliable than single-shot timing on microcontrollers, where interrupt jitter and clock-domain effects can distort isolated measurements.
+
+	Memory benchmarking is based on linker-map analysis and runtime arena checks. The deployed firmware places code and constants in internal Flash, keeps control structures in internal RAM, and allocates a dedicated tensor arena in external SRAM. In the measured build, program text occupies approximately \(0x2A204\) bytes, initialized data approximately \(0x620\) bytes, uninitialized data approximately \(0x5680\) bytes, and the tensor arena region is reserved at \(0x20000\) bytes in external SRAM. This memory split is coherent with the design target of preserving internal RAM headroom for control flow while isolating tensor pressure in external memory.
+
+	\begin{table}[p]
+		\centering
+		\scriptsize
+		\caption{On-device efficiency and raw electrical measurements for 3-second-window inference benchmarks.}
+		\label{tab:energy_benchmark}
+		\resizebox{\textwidth}{!}{%
+		\begin{tabular}{|l|l|r|r|r|r|r|r|r|r|}
+			\hline
+			Platform & Experiment & \# inf. & Window \(T\) [s] & Integral \(V_{\mathrm{shunt}}\,dt\) [V s] & \(R_{\mathrm{shunt}}\) [\(\Omega\)] & Total energy [J] & Avg. power [W] & Energy/inf. [J] & Mean time/inf. [s] \\
+			\hline
+			AudioMoth & CMSIS-NN on-device & 15 & 25.38 & 0.2707 & 1.17 & 1.1566 & 0.0456 & 0.0771 & 1.692 \\
+			\hline
+			Raspberry Pi 3 B+ & Student TFLite benchmark & 150 & 9.22 & 1.969 & 0.39 & 25.8 & 2.80 & 0.172 & 0.0614 \\
+			\hline
+			Raspberry Pi 3 B+ & Student STFT benchmark & 150 & 91.7 & 18.93 & 0.39 & 247.6 & 2.70 & 1.65 & 0.611 \\
+			\hline
+			Raspberry Pi 3 B+ & BirdNET benchmark & 150 & 147 & 31.9 & 0.39 & 418 & 2.84 & 2.79 & 0.978 \\
+			\hline
+		\end{tabular}%
+		}
+	\end{table}
+
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=0.82\textwidth]{images/oscilloscope.jpg}
+		\caption{Oscilloscope setup used for electrical measurements during on-device energy benchmarking.}
+		\label{fig:oscilloscope_energy_setup}
+	\end{figure}
+
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=0.88\textwidth]{images/measurement_example.png}
+		\caption{Reference example of a microcontroller energy-measurement setup, adapted from prior work on compression-aware bird-call inference benchmarking \cite{tao2022energy}.}
+		\label{fig:measurement_example_setup}
+	\end{figure}
+
+	Power and energy benchmarking follows the instrumentation strategy shown in Figures~\ref{fig:oscilloscope_energy_setup} and \ref{fig:measurement_example_setup}. The key metric is energy per inference window, because it directly determines battery lifetime in always-on monitoring. Results in Table~\ref{tab:energy_benchmark} show that the embedded pipeline reaches a substantially lower energy operating point than heavier baselines, even when absolute latency is higher.
+
+	The measured values show a clear scaling pattern. Relative to Raspberry Pi 3B+ student TFLite inference (\(0.1720\)~J per window), the AudioMoth deployment (\(0.0771\)~J) reduces energy per inference by about \(55\%\). Relative to the Raspberry Pi student STFT baseline (\(1.6500\)~J), the reduction is about \(95.3\%\), and relative to the BirdNET baseline (\(2.7900\)~J) it is about \(97.2\%\). In other words, in the tested configuration the microcontroller pipeline operates at approximately \(2.23\times\), \(21.4\times\), and \(36.2\times\) lower energy cost per decision than those three references, respectively.
+
+	This behavior defines the practical deployment trade-off: the microcontroller profile accepts slower per-window inference in exchange for dramatically reduced average power. AudioMoth inference time per 3-second window is longer (\(1.692\)~s) than Raspberry Pi execution, but average power is much lower (\(0.0456\)~W versus \(\sim2.7\)--\(2.84\)~W). For long-horizon field monitoring, this trade is favorable because maintenance interval and autonomy dominate operational cost.
+
+	A useful operational normalization is daily inference energy under continuous 3-second windowing (\(28{,}800\) windows/day). Under this regime, the measured figures correspond to approximately \(0.617\)~Wh/day (AudioMoth), \(1.376\)~Wh/day (Raspberry Pi student TFLite), \(13.2\)~Wh/day (Raspberry Pi student STFT baseline), and \(22.3\)~Wh/day (Raspberry Pi BirdNET baseline). This gap is large enough to change deployment logistics in practice, especially in remote sites where battery replacement intervals dominate field cost.
+\subsubsection{Exported INT8 Inference Evaluation}
+	The exported inference stack uses integer quantization to reduce footprint and to align execution with microcontroller arithmetic capabilities. In deployment terms, quantization is not a standalone compression step but part of an end-to-end consistency requirement: converted models, runtime operators, tensor scales, and threshold policy must remain mutually coherent.
+
+	Two compact quantized sub-models are used in the deployed pipeline, one for backbone feature extraction and one for streaming temporal classification. Their combined footprint remains compatible with the external-SRAM arena strategy and with the firmware budget of the target platform. This modular split also supports staged debugging, because each sub-model can be validated independently before full pipeline execution.
+
+	From the benchmark perspective, the exported INT8 path is considered valid when three conditions hold simultaneously: stable initialization on hardware, non-zero repeated inference timing under sustained loops, and numerically plausible post-softmax confidence distributions with thresholded detections. In the tested configuration, these criteria are satisfied, supporting the claim that the compact model is not only trainable and accurate offline, but also executable and measurable on real edge hardware.
 
 	\chapter{Conclusions and Future Work}
 	\section{Conclusions}
+	The presented system demonstrates that multi-species bird sound classification can be implemented with a compact architecture while retaining strong practical accuracy. The combination of a semi-learnable spectral front-end, causal convolutional encoding, recurrent temporal memory, and focal-distillation training provides a robust solution for acoustically heterogeneous field data.
+
+	Across experiments, the semi-learnable combined log--linear front-end consistently provides the best trade-off between flexibility and stability. It outperforms fixed mel and linear-triangular mappings in controlled comparisons, and it also outperforms a fully learnable front-end despite using a far more constrained parameterization. This result is central because it shows that structured adaptability can be more effective than unconstrained flexibility in low-footprint bioacoustic models.
+
+	Results on the full \(70(+1)\)-class setting confirm that the approach scales beyond small toy subsets. While larger models recover additional absolute accuracy, the compact student remains competitive and preserves the deployment-oriented profile required for long-duration acoustic monitoring. The measured efficiency gap versus heavier baselines further supports this direction, with order-of-magnitude reductions in inference energy cost on comparable hardware classes.
+
+	Overall, the study supports a clear methodological conclusion: effective low-power bioacoustic classification is obtained through co-design of data pipeline, spectral representation, temporal architecture, and training objective, rather than through isolated optimization of a single component.
 	\section{Future Work}
-	\begin{itemize}
-		\item Train on all classes with Mel, linear, and fully learnable front-end variants.
-		\item Evaluate accuracy drop of the exported INT8 model during real inference.
-		\item Extend cross-device validation on additional low-power hardware.
-	\end{itemize}
+	A primary development direction is the \emph{Wren Framework}, currently under active implementation. The objective is to turn the methodology presented in this thesis into a reusable standard workflow that can connect domain experts in biology, bioacoustics, and conservation practice with machine-learning pipelines without requiring advanced ML engineering expertise for every new study.
+
+	In this vision, users with strong domain knowledge can adapt the system by changing dataset composition, target species sets, and a controlled set of training and deployment parameters, while the underlying optimization and export pipeline remains stable and reproducible. The same framework can therefore support ad hoc models for different taxa, habitats, and monitoring objectives, including single-species detectors, regional multi-species classifiers, and subset-specialized models for difficult acoustic communities.
+
+	A second major direction concerns coordinated multi-device inference. Rather than deploying identical models on all nodes, a more effective strategy is to specialize different devices on partially distinct subsets and combine their outputs through ensemble logic. This can improve collective accuracy in challenging ecological contexts, because each node can focus on a narrower acoustic subspace while the network-level fusion recovers broader coverage.
+
+	\begin{figure}[t]
+		\centering
+		\includegraphics[width=0.48\textwidth]{images/map.jpg}\hfill
+		\includegraphics[width=0.48\textwidth]{images/map_2.jpg}
+		\caption{Conceptual direction for multi-device ensemble monitoring: coordinated nodes with subset-specialized models enabling geolocalized and trajectory-aware species mapping.}
+		\label{fig:multi_node_ensemble_mapping}
+	\end{figure}
+
+	This collaborative direction also opens a direct path to spatial analytics, including near-real-time geolocalization maps of detections and temporal reconstruction of movement trajectories for selected species groups. In practical monitoring campaigns, this capability would move the system from single-point classification toward distributed ecological sensing and spatiotemporal interpretation.
+
+	Future work should also include a fully unified full-scale comparison protocol where mel, linear, semi-learnable, and fully learnable front-ends are trained under strictly identical settings and evaluated with the same calibration policy. This will allow finer attribution of gains between representation design and optimization strategy on the complete class inventory.
+
+	Additional research is required on robustness under real domain shift, including site transfer, seasonal drift, and changing background communities. This includes threshold-calibration studies for operational precision/recall control and deeper confusion analysis on difficult taxonomic groups.
+
+	A further direction is tighter end-to-end validation of exported low-precision inference, explicitly measuring the gap between floating-point validation metrics and deployed INT8 behavior under identical test streams and long-duration field conditions.
 
 	\appendix
 	\chapter{Supplementary Materials}
-	Additional implementation details, extended tables, and supplementary plots can be reported here.
-	
+	Additional implementation details, extended tables, and supplementary plots are reported here.
+
 	\printbibliography[heading=bibintoc] % biblatex
 
 	
 	\acknowledgements
-		I'm very grateful to the inventor of the Prolog language, without whom this thesis couldn't exist. I'd also like to acknowledge my advisor Prof. Mario Rossi by tail-recursively acknowledging my advisor.
-		
-\end{document}
+
+	\end{document}

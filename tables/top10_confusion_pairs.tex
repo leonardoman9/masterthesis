@@ -1,31 +1,35 @@
-\begin{table}[p]
+\begin{table}[H]
 \centering
 \scriptsize
-\caption{Top-10 symmetric confusion pairs on the controlled \(8(+1)\) subset: semi-learnable baseline versus fully learnable front-end. Percentages are pair confusion rates normalized by the two-class support of each pair.}
+\renewcommand{\arraystretch}{1.15}
+\setlength{\tabcolsep}{6pt}
+\caption[Top-10 symmetric confusion pairs on the controlled \(8(+1)\) subset.]{Top-10 symmetric confusion pairs on the controlled \(8(+1)\) subset, comparing the semi-learnable baseline and the fully learnable front-end. For each pair, \(N\) is the confusion count and \(R\) is the confusion rate (\%) normalized by the two-class support. \(\Delta N=N_{\mathrm{full}}-N_{\mathrm{semi}}\) and \(\Delta R=R_{\mathrm{full}}-R_{\mathrm{semi}}\) (percentage points, pp).}
 \label{tab:top10_confusion_pairs}
-\begin{tabular}{|p{4.9cm}|r|r|r|r|r|}
+\resizebox{\textwidth}{!}{%
+\begin{tabular}{|p{4.8cm}|r|r|r|r|r|r|}
 \hline
-Species pair & Semi cnt & Semi \% & Fully cnt & Fully \% & \(\Delta\) Fully-Semi \\
+Species pair & \(N_{\mathrm{semi}}\) & \(R_{\mathrm{semi}}\) (\%) & \(N_{\mathrm{full}}\) & \(R_{\mathrm{full}}\) (\%) & \(\Delta N\) (full-semi) & \(\Delta R\) (pp) \\
 \hline
-Lophophanes cristatus \(\leftrightarrow\) Certhia brachydactyla & 35 & 5.63 & 26 & 4.18 & -9 (-1.45 pp) \\
+Lophophanes cristatus \(\leftrightarrow\) Certhia brachydactyla & 35 & 5.63 & 26 & 4.18 & -9 & -1.45 \\
 \hline
-Bubo bubo \(\leftrightarrow\) Lophophanes cristatus & 14 & 2.17 & 41 & 6.37 & +27 (+4.19 pp) \\
+Bubo bubo \(\leftrightarrow\) Lophophanes cristatus & 14 & 2.17 & 41 & 6.37 & +27 & +4.19 \\
 \hline
-Certhia familiaris \(\leftrightarrow\) Bubo bubo & 20 & 4.91 & 25 & 6.14 & +5 (+1.23 pp) \\
+Certhia familiaris \(\leftrightarrow\) Bubo bubo & 20 & 4.91 & 25 & 6.14 & +5 & +1.23 \\
 \hline
-Certhia familiaris \(\leftrightarrow\) Lophophanes cristatus & 13 & 2.05 & 26 & 4.11 & +13 (+2.05 pp) \\
+Certhia familiaris \(\leftrightarrow\) Lophophanes cristatus & 13 & 2.05 & 26 & 4.11 & +13 & +2.05 \\
 \hline
-Emberiza cia \(\leftrightarrow\) Lophophanes cristatus & 13 & 2.20 & 21 & 3.55 & +8 (+1.35 pp) \\
+Emberiza cia \(\leftrightarrow\) Lophophanes cristatus & 13 & 2.20 & 21 & 3.55 & +8 & +1.35 \\
 \hline
-Emberiza cia \(\leftrightarrow\) Certhia brachydactyla & 12 & 3.50 & 17 & 4.96 & +5 (+1.46 pp) \\
+Emberiza cia \(\leftrightarrow\) Certhia brachydactyla & 12 & 3.50 & 17 & 4.96 & +5 & +1.46 \\
 \hline
-Certhia familiaris \(\leftrightarrow\) Emberiza cia & 7 & 1.98 & 17 & 4.80 & +10 (+2.82 pp) \\
+Certhia familiaris \(\leftrightarrow\) Emberiza cia & 7 & 1.98 & 17 & 4.80 & +10 & +2.82 \\
 \hline
-Poecile montanus \(\leftrightarrow\) Certhia brachydactyla & 9 & 2.85 & 10 & 3.16 & +1 (+0.32 pp) \\
+Poecile montanus \(\leftrightarrow\) Certhia brachydactyla & 9 & 2.85 & 10 & 3.16 & +1 & +0.32 \\
 \hline
-Periparus ater \(\leftrightarrow\) Lophophanes cristatus & 6 & 1.21 & 10 & 2.02 & +4 (+0.81 pp) \\
+Periparus ater \(\leftrightarrow\) Lophophanes cristatus & 6 & 1.21 & 10 & 2.02 & +4 & +0.81 \\
 \hline
-Poecile montanus \(\leftrightarrow\) Lophophanes cristatus & 9 & 1.60 & 5 & 0.89 & -4 (-0.71 pp) \\
+Poecile montanus \(\leftrightarrow\) Lophophanes cristatus & 9 & 1.60 & 5 & 0.89 & -4 & -0.71 \\
 \hline
-\end{tabular}
+\end{tabular}%
+}
 \end{table}

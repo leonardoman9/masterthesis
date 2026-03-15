@@ -26,7 +26,7 @@ Sostituisci `example.tex` con il tuo file principale.
 ## Dove finisce l'output
 
 - File intermedi in `thesis/build/`
-- PDF finale copiato anche in `thesis/` (stessa cartella del `.tex`)
+- PDF finale in `thesis/output.pdf`
 
 Questo comportamento è definito in `thesis/latexmkrc`.
 

@@ -143,18 +143,24 @@ with the `report' document style}}{}
         \end{center}%
         \vfill%
     \begin{minipage}[t]{\textwidth}%
-    \centering
-    \setlength{\tabcolsep}{0pt}%
-    \begin{tabular*}{0.9\textwidth}{@{\extracolsep{\fill}}ll}%
-    CANDIDATE & SUPERVISOR \\%
-    \@candidate & \@supervisor\\[5mm]%
-    \if*\@cosupervisors 
-        \if*\@cosupervisor & \\[27mm] 
-        \else & \@cosupervisor \\[5mm] \fi 
-    \else & \@cosupervisors \\ \fi
-    \end{tabular*}\par\vspace{5mm}%
-    \centerline{Academic year \@academicyear}%
-    \centerline{Session \@session}%
+    \begin{minipage}[t]{0.34\textwidth}%
+    \raggedright
+    CANDIDATE\\[2mm]%
+    \@candidate
+    \end{minipage}%
+    \makebox[0pt][l]{%
+    \hspace*{45mm}%
+    \begin{minipage}[t]{0.30\textwidth}%
+    \raggedleft
+    SUPERVISOR\\[2mm]%
+    \@supervisor\\[5mm]%
+    \if*\@cosupervisors
+        \if*\@cosupervisor
+        \else \@cosupervisor\\[5mm] \fi
+    \else \@cosupervisors\\ \fi
+    \end{minipage}}\\[5mm]%
+    \centerline{Academic year \@academicyear}\\ %
+    \centerline{Session \@session}\\ %
     \end{minipage}%
         \null
     \newpage}
@@ -228,7 +234,6 @@ with the `report' document style}}{}
     \cleardoublepage
     \pagestyle{plain}
     \chapter*{Acknowledgements}
-    \phantomsection
     \addcontentsline{toc}{chapter}{Acknowledgements}
     }
 
